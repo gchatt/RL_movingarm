@@ -17,12 +17,12 @@ from tensorboard.plugins.hparams import api as hp
 L1UNITS = hp.HParam('layer_1_units',hp.Discrete([100]))
 
 #L2UNITS = hp.HParam('layer_2_units',hp.Discrete([25,50,75,100,150,200,250,300]))
-L2UNITS = hp.HParam('layer_2_units',hp.Discrete([50,300]))
+L2UNITS = hp.HParam('layer_2_units',hp.Discrete([50]))
 
-NLAYER = hp.HParam('number_of_layers',hp.Discrete([1,2]))
+NLAYER = hp.HParam('number_of_layers',hp.Discrete([2]))
 #ALPHA = hp.HParam('alpha',hp.RealInterval(0.3,1.5))
-ALPHA = hp.HParam('alpha',hp.RealInterval(0.3,0.8))
-STD_G = hp.HParam('std_g',hp.Discrete([1,3,5]))
+ALPHA = hp.HParam('alpha',hp.RealInterval(0.5,0.8))
+STD_G = hp.HParam('std_g',hp.Discrete([5]))
 
 #VAL_SCALE = hp.HParam('value_scale',hp.Discrete([1,5,10]))
 VAL_SCALE = hp.HParam('value_scale',hp.Discrete([1]))
@@ -34,9 +34,9 @@ MAXSTEPR = hp.HParam('max_steps_real',hp.Discrete([1000]))
 UPDATE_FREQ = hp.HParam('update_frequency',hp.Discrete([100]))
 
 #TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.005,0.5))
-TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.05,0.2))
+TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.05,0.1))
 
-PRE_NOISE = hp.HParam('store_pre_noise',hp.Discrete([0,1]))
+PRE_NOISE = hp.HParam('store_pre_noise',hp.Discrete([0]))
 
 METRIC_ACCURACY = 'accuracy'
 #maxgrad
