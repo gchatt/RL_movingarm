@@ -21,8 +21,8 @@ L2UNITS = hp.HParam('layer_2_units',hp.Discrete([50]))
 
 NLAYER = hp.HParam('number_of_layers',hp.Discrete([2]))
 #ALPHA = hp.HParam('alpha',hp.RealInterval(0.3,1.5))
-ALPHA = hp.HParam('alpha',hp.RealInterval(0.5,0.8))
-STD_G = hp.HParam('std_g',hp.Discrete([5]))
+ALPHA = hp.HParam('alpha',hp.RealInterval(1.0,1.5))
+STD_G = hp.HParam('std_g',hp.Discrete([3,5]))
 
 #VAL_SCALE = hp.HParam('value_scale',hp.Discrete([1,5,10]))
 VAL_SCALE = hp.HParam('value_scale',hp.Discrete([1]))
@@ -34,7 +34,7 @@ MAXSTEPR = hp.HParam('max_steps_real',hp.Discrete([1000]))
 UPDATE_FREQ = hp.HParam('update_frequency',hp.Discrete([100]))
 
 #TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.005,0.5))
-TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.05,0.1))
+TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.1,0.2))
 
 PRE_NOISE = hp.HParam('store_pre_noise',hp.Discrete([0]))
 
@@ -60,12 +60,13 @@ class moving_arm_env(threading.Thread):
 		self.num_rewards_per_color = 1; #default 2
 		self.num_reward_objects = 3; #how many different objects you can get. default 3
 		self.max_obj_amounts = 20; #max amount you can have for objects
+		self.min_obj_amounts = 10;
 		
 		self.n_step = 0;
 		self.n_session = 0;
 		
 		self.max_steps_real = hparams[MAXSTEPR]; #max steps per session once agent out of exploration phase
-		self.max_sessions = 10; #number of sessions before stopping #default 1000
+		self.max_sessions = 50; #number of sessions before stopping #default 1000
 		self.max_steps_init = 10000; #max number of steps during the initialization / exploration stage
 		self.max_steps = self.max_steps_init; #max steps per session
 		self.max_explore_sessions = 10000;
@@ -106,10 +107,10 @@ class moving_arm_env(threading.Thread):
 		self.avg_reward = 0;
 	
 	def run(self):
-		hp.hparams(self.hparams)
 		self.gen_new_env();
 		self.start_round();
 		with self.summary_writer.as_default():
+			hp.hparams(self.hparams)
 			tf.summary.scalar(METRIC_ACCURACY,self.avg_reward,step=self.n_session)
 	
 	def gen_new_env(self):
@@ -123,8 +124,9 @@ class moving_arm_env(threading.Thread):
 				print(reward_position)
 				reward_object_vector = [];
 				max_amount = self.max_obj_amounts; #max amount you can have of an object
+				min_amount = self.min_obj_amounts;
 				for x in range(self.num_reward_objects):
-					reward_object_vector.append(random.randint(0,max_amount)); #assign rewards vectors to the positions rewarded for that color
+					reward_object_vector.append(random.randint(min_amount,max_amount)); #assign rewards vectors to the positions rewarded for that color
 				rewards.append([reward_position,reward_object_vector]); #add a tuple to the array	
 			self.reward_array.append([color,rewards]);
 	
