@@ -22,6 +22,7 @@ L2UNITS = hp.HParam('layer_2_units',hp.Discrete([50]))
 NLAYER = hp.HParam('number_of_layers',hp.Discrete([2]))
 #ALPHA = hp.HParam('alpha',hp.RealInterval(0.3,1.5))
 ALPHA = hp.HParam('alpha',hp.RealInterval(1.0,1.5))
+ALPHA_NUM_DRAW = 1;
 STD_G = hp.HParam('std_g',hp.Discrete([3,5]))
 
 #VAL_SCALE = hp.HParam('value_scale',hp.Discrete([1,5,10]))
@@ -35,6 +36,7 @@ UPDATE_FREQ = hp.HParam('update_frequency',hp.Discrete([100]))
 
 #TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.005,0.5))
 TAU_S = hp.HParam('target_critic_update_rate',hp.RealInterval(0.1,0.2))
+TAU_S_DRAW = 1;
 
 PRE_NOISE = hp.HParam('store_pre_noise',hp.Discrete([0]))
 
@@ -526,12 +528,12 @@ with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 for a in L1UNITS.domain.values:
 	for b in NLAYER.domain.values:
 		for c in L2UNITS.domain.values:
-			for d in (ALPHA.domain.min_value,ALPHA.domain.max_value):
+			for d in np.random.uniform(ALPHA.domain.min_value,ALPHA.domain.max_value,[ALPHA_NUM_DRAW]):
 				for e in STD_G.domain.values:
 					for f in VAL_SCALE.domain.values:
 						for g in MAXSTEPR.domain.values:
 							for h in UPDATE_FREQ.domain.values:
-								for i in (TAU_S.domain.min_value,TAU_S.domain.max_value):
+								for i in np.random.uniform(TAU_S.domain.min_value,TAU_S.domain.max_value,[TAU_S_DRAW]):
 									for j in PRE_NOISE.domain.values:
 										for t in range(trials):
 											hparams = {
