@@ -66,7 +66,7 @@ class moving_arm_env(threading.Thread):
 		self.n_session = 0;
 		
 		self.max_steps_real = hparams[MAXSTEPR]; #max steps per session once agent out of exploration phase
-		self.max_sessions = 50; #number of sessions before stopping #default 1000
+		self.max_sessions = 30; #number of sessions before stopping #default 1000
 		self.max_steps_init = 10000; #max number of steps during the initialization / exploration stage
 		self.max_steps = self.max_steps_init; #max steps per session
 		self.max_explore_sessions = 10000;
