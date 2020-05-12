@@ -355,7 +355,7 @@ class Agent_1:
 		self.critic = Critic(self.state_sz,self.action_sz);
 		self.critic_target = Critic(self.state_sz,self.action_sz);
 		lr_critic = 0.001; #hyperparameter
-		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_actor);
+		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic);
 		self.update_target_variables(self.critic_target.weights, self.critic.weights,1.0);
 		self.max_grad = 10; #used by huber loss function. hyperparameter
 		#self.tau_s = 0.005 #original value
@@ -421,7 +421,7 @@ class Agent_1:
 	def valuation(self,reward):
 		sum = 0;
 		values = [0.5,0.8,0.9]
-		for i in range(len(reward)):
+		for i in range(len(reward[0])):
 			sum += values[i]*reward[0][i]*self.value_scale
 		return sum
 		
