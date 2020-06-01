@@ -104,10 +104,10 @@ class moving_arm_env(threading.Thread):
 		
 		current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
 		param_str = str({h.name: hparams[h] for h in hparams})
-		log_dir = os.getcwd()+'\\logs\\' + current_time
+		log_dir = os.getcwd()+'/logs/' + current_time
 		self.summary_writer = tf.summary.create_file_writer(log_dir)
 		
-		with open(log_dir+'\\header.txt','w') as header_file:
+		with open(log_dir+'/header.txt','w') as header_file:
 			header_file.write(param_str)
 		
 		self.last_reward = 0;
@@ -941,25 +941,14 @@ class Agent_3:
 		
 
 #Start script here
-
-current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
-log_dir = os.getcwd()+'\\logs\\' + current_time
-summary_writer = tf.summary.create_file_writer(log_dir)
-
 mv_envs = [];
-#env_threads = [];
 n = 0;
 trials = 2;
-with summary_writer.as_default():
+with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 	hp.hparams_config(
 		hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3],
 		metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 	)
-
-
-# mv = moving_arm_env(summary_writer);
-# mv.gen_new_env();
-# mv.start_round();
 
 for a in FORCE_SCALE.domain.values:
 	for b in UPDATE_FREQ.domain.values:
