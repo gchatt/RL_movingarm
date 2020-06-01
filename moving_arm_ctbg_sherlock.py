@@ -1,14 +1,11 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import numpy as np
 from numpy import random
-import matplotlib.pyplot as plt
 import copy
 import pickle
-import pygame
 import datetime
 from collections import deque
 import CTBG_sherlock as CTBG
@@ -22,7 +19,7 @@ GUI = False
 
 #Output from the agent is scaled by max_firing rate; this number is a relation between firing rate of the output neuron and how much the arm moves at that time_step. > 40 is too high without noise.
 #Lower values mean more movement of the arm (can substitute for high noise?)
-FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([10]))
+FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5,10]))
 
 #How often to the run the 'train' subroutine
 UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
@@ -31,10 +28,10 @@ UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
 TOLERANCE = hp.HParam('tolerance',hp.Discrete([100]))
 
 #Number of steps in each session. Previously it has been found that this number needs to be > 1000 for proper exploration before a reset
-MAX_STEPS = hp.HParam('max_steps',hp.Discrete([100]))
+MAX_STEPS = hp.HParam('max_steps',hp.Discrete([10000]))
 
 #How many sessions before stopping the program
-MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([2]))
+MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([100]))
 
 #CDIV = how much to power the color vector; 255 means fully normalized; smaller values means color vector has higher magnitude
 CDIV = hp.HParam('cdiv',hp.Discrete([255]))
@@ -44,11 +41,11 @@ VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
 
 #Learning rate for CTBG object in main agent
 LR_CTBG = hp.HParam('lr_ctbg',hp.RealInterval(0.001,0.01))
-LR_CTBG_DRAW = 1
+LR_CTBG_DRAW = 3
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
 LR_CRITIC = hp.HParam('lr_critic',hp.RealInterval(0.001,0.01))
-LR_CRITIC_DRAW = 1
+LR_CRITIC_DRAW = 3
 
 #striatum division size (multiply by 3 for total size)
 UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
@@ -952,7 +949,7 @@ summary_writer = tf.summary.create_file_writer(log_dir)
 mv_envs = [];
 #env_threads = [];
 n = 0;
-trials = 1;
+trials = 2;
 with summary_writer.as_default():
 	hp.hparams_config(
 		hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3],
