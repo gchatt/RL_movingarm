@@ -16,10 +16,11 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 verbose = False
 GUI = False
+linux = False
 
 #Output from the agent is scaled by max_firing rate; this number is a relation between firing rate of the output neuron and how much the arm moves at that time_step. > 40 is too high without noise.
 #Lower values mean more movement of the arm (can substitute for high noise?)
-FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5,10]))
+FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([40]))
 
 #How often to the run the 'train' subroutine
 UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
@@ -28,10 +29,10 @@ UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
 TOLERANCE = hp.HParam('tolerance',hp.Discrete([100]))
 
 #Number of steps in each session. Previously it has been found that this number needs to be > 1000 for proper exploration before a reset
-MAX_STEPS = hp.HParam('max_steps',hp.Discrete([10000]))
+MAX_STEPS = hp.HParam('max_steps',hp.Discrete([1000]))
 
 #How many sessions before stopping the program
-MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([100]))
+MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([1000]))
 
 #CDIV = how much to power the color vector; 255 means fully normalized; smaller values means color vector has higher magnitude
 CDIV = hp.HParam('cdiv',hp.Discrete([255]))
@@ -40,12 +41,12 @@ CDIV = hp.HParam('cdiv',hp.Discrete([255]))
 VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
 
 #Learning rate for CTBG object in main agent
-LR_CTBG = hp.HParam('lr_ctbg',hp.RealInterval(0.001,0.01))
-LR_CTBG_DRAW = 3
+LR_CTBG = hp.HParam('lr_ctbg',hp.RealInterval(0.001,0.001))
+LR_CTBG_DRAW = 1
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
-LR_CRITIC = hp.HParam('lr_critic',hp.RealInterval(0.001,0.01))
-LR_CRITIC_DRAW = 3
+LR_CRITIC = hp.HParam('lr_critic',hp.RealInterval(0.001,0.001))
+LR_CRITIC_DRAW = 1
 
 #striatum division size (multiply by 3 for total size)
 UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
@@ -55,6 +56,9 @@ UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 
 #premotor and motor cortex layer size
 UNIT_3 = hp.HParam('unit_3',hp.Discrete([300]))
+
+#reward decay term
+TAU = hp.HParam('tau',hp.Discrete([50]))
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -104,11 +108,18 @@ class moving_arm_env(threading.Thread):
 		
 		current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
 		param_str = str({h.name: hparams[h] for h in hparams})
-		log_dir = os.getcwd()+'/logs/' + current_time
-		self.summary_writer = tf.summary.create_file_writer(log_dir)
-		
-		with open(log_dir+'/header.txt','w') as header_file:
-			header_file.write(param_str)
+		if linux:
+			log_dir = os.getcwd()+'/logs/' + current_time
+			self.summary_writer = tf.summary.create_file_writer(log_dir)
+			
+			with open(log_dir+'/header.txt','w') as header_file:
+				header_file.write(param_str)
+		else:
+			log_dir = os.getcwd()+'\\logs\\' + current_time
+			self.summary_writer = tf.summary.create_file_writer(log_dir)
+			
+			with open(log_dir+'\\header.txt','w') as header_file:
+				header_file.write(param_str)
 		
 		self.last_reward = 0;
 	
@@ -442,12 +453,14 @@ class Actor(keras.Model):
 class Critic_CTBG(keras.Model):
 	def __init__(self):
 		super(Critic_CTBG,self).__init__();
-		self.l1 = layers.Dense(100,activation='relu');
+		self.l1 = layers.Dense(400,activation='relu');
+		self.l2 = layers.Dense(400,activation='relu');
 		self.lout = layers.Dense(1,activation='relu');
 		
 	def call(self,state,action):
 		inputs = layers.concatenate([state,action]);
 		x = self.l1(inputs);
+		x = self.l2(x);
 		val = self.lout(x);
 		return val
 
@@ -795,7 +808,7 @@ class Agent_3:
 		
 		units = [self.hparams[UNIT_1],self.hparams[UNIT_2],self.hparams[UNIT_3]]
 		#print(units)
-		self.ctbg = CTBG.CTBG(summary_writer,units)
+		self.ctbg = CTBG.CTBG(summary_writer,units,self.hparams[TAU])
 		lr_ctbg = self.hparams[LR_CTBG]
 		#print(lr_ctbg)
 		self.ctbg_opt = tf.keras.optimizers.Adam(learning_rate=lr_ctbg)
@@ -820,6 +833,8 @@ class Agent_3:
 		
 		self.summary_writer = summary_writer
 		self.c_arm_pos_new = []
+		
+		self.last_actor_loss = 0
 		self.last_reward = 0
 		
 	def act(self,c_arm_pos,current_color):
@@ -833,7 +848,7 @@ class Agent_3:
 		str_inputs = layers.concatenate([self.goal,current_color,c_arm_pos,self.last_action_tensor])
 		prem_inputs = layers.concatenate([self.goal,current_color,c_arm_pos])
 		self.last_state = copy.deepcopy([str_inputs,prem_inputs])
-		action = self.ctbg(str_inputs,prem_inputs,self.last_reward,True)
+		action = self.ctbg(str_inputs,prem_inputs,self.last_actor_loss,True)
 
 		self.last_action_tensor = copy.deepcopy(action)
 		action_fr = tf.math.multiply(self.max_fr,action)
@@ -910,6 +925,7 @@ class Agent_3:
 			#gradient ascent, using the critic that was just updated
 			self.actor_loss = -tf.reduce_mean(self.critic(pre_str_mem,next_actions));
 		
+		self.last_actor_loss = self.actor_loss.numpy()
 		#print(self.ctbg.trainable_variables)
 		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables);
 		#print(self.actor_grad)
@@ -933,9 +949,9 @@ class Agent_3:
 				tf.summary.scalar('last reward',self.last_reward,step=self.n_step)
 			elif type == 2:
 				tf.summary.scalar('actor loss',self.actor_loss,step=self.n_train)
-				tf.summary.histogram('actor gradient',self.actor_grad[19],step=self.n_train)
+				#tf.summary.histogram('actor gradient',self.actor_grad[19],step=self.n_train)
 				tf.summary.scalar('critic loss',self.critic_loss,step=self.n_train)
-				tf.summary.histogram('critic weights',self.critic.trainable_weights[0],step=self.n_train)
+				#tf.summary.histogram('critic weights',self.critic.trainable_weights[0],step=self.n_train)
 
 			
 		
@@ -943,12 +959,19 @@ class Agent_3:
 #Start script here
 mv_envs = [];
 n = 0;
-trials = 2;
-with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
-	hp.hparams_config(
-		hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3],
-		metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
-	)
+trials = 1;
+if linux:
+	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
+		hp.hparams_config(
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU],
+			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
+		)
+else:
+	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
+		hp.hparams_config(
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU],
+			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
+		)
 
 for a in FORCE_SCALE.domain.values:
 	for b in UPDATE_FREQ.domain.values:
@@ -962,21 +985,23 @@ for a in FORCE_SCALE.domain.values:
 									for j in UNIT_1.domain.values:
 										for k in UNIT_2.domain.values:
 											for l in UNIT_3.domain.values:
-												for t in range(trials):
-													hparams = {
-																FORCE_SCALE: a,
-																UPDATE_FREQ: b,
-																TOLERANCE: c,
-																MAX_STEPS: d,
-																MAX_SESSIONS: e,
-																CDIV: f,
-																VAL_SCALE: g,
-																LR_CTBG: h,
-																LR_CRITIC: i,
-																UNIT_1: j,
-																UNIT_2: k,
-																UNIT_3: l,
-															}
-													mv_envs.append(moving_arm_env(hparams));
-													mv_envs[n].start();
-													n += 1;
+												for m in TAU.domain.values:
+													for t in range(trials):
+														hparams = {
+																	FORCE_SCALE: a,
+																	UPDATE_FREQ: b,
+																	TOLERANCE: c,
+																	MAX_STEPS: d,
+																	MAX_SESSIONS: e,
+																	CDIV: f,
+																	VAL_SCALE: g,
+																	LR_CTBG: h,
+																	LR_CRITIC: i,
+																	UNIT_1: j,
+																	UNIT_2: k,
+																	UNIT_3: l,
+																	TAU: m,
+																}
+														mv_envs.append(moving_arm_env(hparams));
+														mv_envs[n].start();
+														n += 1;
