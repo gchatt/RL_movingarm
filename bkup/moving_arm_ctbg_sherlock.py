@@ -16,27 +16,23 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 verbose = False
 GUI = False
-if GUI:
-	import pygame
 linux = False
-manual_exit = True
-#use_target_networks = True
 
 #Output from the agent is scaled by max_firing rate; this number is a relation between firing rate of the output neuron and how much the arm moves at that time_step. > 40 is too high without noise.
 #Lower values mean more movement of the arm (can substitute for high noise?)
-FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5]))
+FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([40]))
 
 #How often to the run the 'train' subroutine
-UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([100]))
+UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
 
 #How far away from the rewarded position you can be to get some scaled reward
 TOLERANCE = hp.HParam('tolerance',hp.Discrete([100]))
 
 #Number of steps in each session. Previously it has been found that this number needs to be > 1000 for proper exploration before a reset
-MAX_STEPS = hp.HParam('max_steps',hp.Discrete([5]))
+MAX_STEPS = hp.HParam('max_steps',hp.Discrete([1000]))
 
 #How many sessions before stopping the program
-MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([100000]))
+MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([1000]))
 
 #CDIV = how much to power the color vector; 255 means fully normalized; smaller values means color vector has higher magnitude
 CDIV = hp.HParam('cdiv',hp.Discrete([255]))
@@ -59,13 +55,10 @@ UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
 UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 
 #premotor and motor cortex layer size
-UNIT_3 = hp.HParam('unit_3',hp.Discrete([400]))
+UNIT_3 = hp.HParam('unit_3',hp.Discrete([300]))
 
 #reward decay term
-TAU = hp.HParam('tau',hp.Discrete([1]))
-
-#noise
-STD_MC = hp.HParam('std_mc',hp.Discrete([10]))
+TAU = hp.HParam('tau',hp.Discrete([50]))
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -168,10 +161,9 @@ class moving_arm_env(threading.Thread):
 		self.backup_reward_array = copy.deepcopy(self.reward_array); #reward array can be altered if answers are found; store back up
 		
 		#initialize round
-		self.n_step = 0
-		self.n_step_total = 0
-		self.n_session = 0
-		self.current_color = self.reward_array[0][0] #color is first array in set of arrays; next are positions; next are rewards
+		self.n_step = 0;
+		self.n_session = 0;
+		self.current_color = self.reward_array[0][0]; #color is first array in set of arrays; next are positions; next are rewards
 
 
 
@@ -206,17 +198,16 @@ class moving_arm_env(threading.Thread):
 					cp, cc, reward, done, done_2 = self.step(action[0]);
 					agent.update_memory(self.c_arm_pos[0],np.array([self.current_color])/cdiv,reward)
 					#agent.store_update(np.array(self.current_color)/255.,np.array(self.c_arm_pos)/self.pos_range,reward);
-					if self.n_step_total % self.update_freq == 0:
-						#print(self.n_step_total)
+					if self.n_step % self.update_freq == 0: 
 						agent.train();
-					self.last_reward = agent.last_reward_avg
+					self.last_reward = agent.last_reward
 					#reset
 					if(done_2):
 						self.c_arm_pos = np.zeros((1,self.num_arms)); 
 						#agent.c_arm_pos = np.zeros((1,self.num_arms));
 						agent.last_action = [[0,0,0,0,0,0]];
 						agent.last_action_tensor = tf.convert_to_tensor(np.array(agent.last_action,dtype='float32'));
-						#agent.memory.clear();
+						agent.memory.clear();
 					
 
 					
@@ -243,17 +234,17 @@ class moving_arm_env(threading.Thread):
 				cp, cc, reward, done, done_2 = self.step(action[0]);
 				#self.avg_reward += reward / self.update_freq
 				agent.update_memory(self.c_arm_pos[0],np.array([self.current_color])/cdiv,reward)
-				if self.n_step_total % self.update_freq == 0: 
+				if self.n_step % self.update_freq == 0: 
 					agent.train()
 				
-				self.last_reward = agent.last_reward_avg
+				self.last_reward = agent.last_reward
 				#reset
 				if(done_2):
 					self.c_arm_pos = np.zeros((1,self.num_arms)); 
 					#agent.c_arm_pos = np.zeros((1,self.num_arms));
 					agent.last_action = [[0,0,0,0,0,0]];
 					agent.last_action_tensor = tf.convert_to_tensor(np.array(agent.last_action,dtype='float32'));
-					#agent.memory.clear();
+					agent.memory.clear();
 			self.end_round();
 				
 	
@@ -262,7 +253,6 @@ class moving_arm_env(threading.Thread):
 		done = False
 		done_2 = False
 		self.n_step += 1;
-		self.n_step_total += 1
 		self.move_arm_to(goal);
 		reward = self.check_reward();
 		if np.amax(reward) < 0:
@@ -281,7 +271,6 @@ class moving_arm_env(threading.Thread):
 		done = False
 		done_2 = False
 		self.n_step += 1;
-		self.n_step_total += 1
 		self.move_arm(action);
 		reward = self.check_reward();
 		#reward is negative if gets too close to boundary. Reset it.
@@ -466,18 +455,13 @@ class Critic_CTBG(keras.Model):
 		super(Critic_CTBG,self).__init__();
 		self.l1 = layers.Dense(400,activation='relu');
 		self.l2 = layers.Dense(400,activation='relu');
-		self.bna = tf.keras.layers.BatchNormalization()
-		self.bnb = tf.keras.layers.BatchNormalization()
 		self.lout = layers.Dense(1,activation='relu');
 		
-	def call(self,state,action,bnorm):
+	def call(self,state,action):
 		inputs = layers.concatenate([state,action]);
 		x = self.l1(inputs);
-		x = self.bna(x,training=bnorm)
 		x = self.l2(x);
-		x = self.bnb(x,training=bnorm)
 		val = self.lout(x);
-		#val = tf.clip_by_value(x,0,100)
 		return val
 
 class SG(keras.Model):
@@ -721,23 +705,21 @@ class Agent_MB:
 		self.goal_thresh_1 = 200
 		self.goal_thresh_2 = 300
 		
-		dist = np.sum(np.abs(binned_pos-goal)) #sum of the distance between the goal (binned) and the current position (binned) divided by 10
+		dist = np.sum(np.abs(binned_pos-goal)) / 10 #sum of the distance between the goal (binned) and the current position (binned) divided by 10
 		#1.5 is cutoff for being in the bin
-		#print('dist')
-		#print(dist)
+		
 		if verbose:
 			print('in check goal')
-			print(goal)
 			print('binned pos')
 			print(binned_pos)
 			print('dist')
 			print(dist)
-		thresh_1 = 5
+		thresh_1 = 3
 		thresh_2 = 0
-		base = 100
+		base = 2
 		reward = 0
 		if dist < thresh_1:
-			reward = base * np.exp(-dist)
+			reward = base * ((thresh_1 - dist)**2)
 			if dist <= thresh_2:
 				self.met_goal_count += 1 #if within the bin, then count this as met goal
 				#if it seems like you are meeting goal consistenty (ie 50% of the last 100 checks) then count this as met goal
@@ -826,7 +808,7 @@ class Agent_3:
 		
 		units = [self.hparams[UNIT_1],self.hparams[UNIT_2],self.hparams[UNIT_3]]
 		#print(units)
-		self.ctbg = CTBG.CTBG(summary_writer,units,self.hparams[TAU],self.hparams[STD_MC])
+		self.ctbg = CTBG.CTBG(summary_writer,units,self.hparams[TAU])
 		lr_ctbg = self.hparams[LR_CTBG]
 		#print(lr_ctbg)
 		self.ctbg_opt = tf.keras.optimizers.Adam(learning_rate=lr_ctbg)
@@ -836,9 +818,9 @@ class Agent_3:
 		#print(lr_critic)
 		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic)
 
-		self.gamma = 0.01 #discount parameter when calculating Q
+		self.gamma = 0.9 #discount parameter when calculating Q
 		
-		self.max_fr = 20.
+		self.max_fr = 200.
 		self.last_state = []
 		self.max_grad = 10 #for huber loss
 		
@@ -853,25 +835,23 @@ class Agent_3:
 		self.c_arm_pos_new = []
 		
 		self.last_actor_loss = 0
-		self.last_reward_avg = 0
+		self.last_reward = 0
 		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
-			self.goal = tf.clip_by_value(self.pfc.act(c_arm_pos,current_color),-2./9.,2./9.)
+			self.goal = self.pfc.act(c_arm_pos,current_color)
 			print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
-		c_arm_pos = self.expand_vector(c_arm_pos)
-		goal = self.expand_vector(self.goal)
 
-		str_inputs = layers.concatenate([goal,current_color,c_arm_pos,self.last_action_tensor])
-		prem_inputs = layers.concatenate([goal,current_color,c_arm_pos])
+		str_inputs = layers.concatenate([self.goal,current_color,c_arm_pos,self.last_action_tensor])
+		prem_inputs = layers.concatenate([self.goal,current_color,c_arm_pos])
 		self.last_state = copy.deepcopy([str_inputs,prem_inputs])
-		action = self.ctbg(str_inputs,prem_inputs,self.last_reward_avg,use_noisy_relaxation=True,bnorm=False)
+		action = self.ctbg(str_inputs,prem_inputs,self.last_actor_loss,True)
 
 		self.last_action_tensor = copy.deepcopy(action)
-		#action_fr = tf.math.multiply(self.max_fr,action)
+		action_fr = tf.math.multiply(self.max_fr,action)
 		#action_fr = tf.clip_by_value(action,0,self.max_fr)
 		#print(action_fr)
 		
@@ -885,21 +865,8 @@ class Agent_3:
 			print('action')
 			print(action)
 		
-		#return action_fr
-		return action
-	
-	def expand_vector(self,v):
-		vnew = np.zeros((1,6))
-		
-		i = 0
-		for p in v[0]:
-			if p > 0:
-				vnew[0][i] = np.abs(p)
-			else:
-				vnew[0][i+1] = np.abs(p)
-			i += 2
-			
-		return vnew
+		return action_fr
+		#return action
 	
 	def update_memory(self,c_arm_pos,current_color,reward):
 		total_reward = self.pfc.check_met_goal(self.goal,c_arm_pos)
@@ -913,13 +880,11 @@ class Agent_3:
 		#pfc_pred_reward = self.pfc.**
 		self.last_reward = total_reward
 		self.c_arm_pos_new = c_arm_pos
-		goal = self.expand_vector(self.goal)
 		self.log(1)
 		c_arm_pos = np.array([c_arm_pos])
-		c_arm_pos = self.expand_vector(c_arm_pos)
 
-		new_str = layers.concatenate([goal,current_color,c_arm_pos,self.last_action_tensor]); #goal always stays constant from the .act function 
-		new_prem = layers.concatenate([goal,current_color,c_arm_pos])
+		new_str = layers.concatenate([self.goal,current_color,c_arm_pos,self.last_action_tensor]); #goal always stays constant from the .act function 
+		new_prem = layers.concatenate([self.goal,current_color,c_arm_pos])
 		self.memory.store(self.last_state[0],self.last_state[1],new_str,new_prem,self.last_action_tensor,total_reward); #<s_str, s_prem, s'_str, s'_prem, a, r> -> store
 	
 	def train(self):
@@ -936,43 +901,35 @@ class Agent_3:
 
 		mem_rewards = tf.convert_to_tensor(np.vstack(self.memory.rewards),dtype=tf.float32)
 		
-		self.last_reward_avg = tf.reduce_mean(mem_rewards)
-		#print(self.last_reward_avg)
-		
 		#This may fail as it is ON TARGET. This system perhaps precludes CTBG containing internal noise because incorrect actions will be assoc w/ reward? The noise can be mild maybe
-		target_Q = self.critic(post_prem_mem,self.ctbg(post_str_mem,post_prem_mem,0,False,bnorm=False),bnorm=False) #trying giving prem_state; 6/8/20
-
-
+		target_Q = self.critic(post_str_mem,self.ctbg(post_str_mem,post_prem_mem,0,False)) #only giving the str state since it has everything in prem state
+		#print('before')
+		#print(target_Q)
 		#Critical. In the future, target_Q = weighted average of model free Q and model based Q from your PFC module. Also this can be 'tuned off' when turning down complexity
 		target_Q = mem_rewards + tf.math.multiply(target_Q,self.gamma)
 		#print('after')
 		#print(target_Q)
 		with tf.GradientTape() as tape:
-			current_Q = self.critic(pre_prem_mem,mem_actions,bnorm=True)
-			td_errors = huber(target_Q,current_Q)
-			#print(tf.math.reduce_max(current_Q))
-			#print(tf.math.reduce_max(target_Q))
-			#print(tf.math.reduce_max(td_errors))
+			current_Q = self.critic(pre_str_mem,mem_actions)
+			td_errors = huber(target_Q,current_Q)**2;
 			#td_errors = (target_Q - current_Q)**2
 			self.critic_loss = tf.reduce_mean(td_errors);
-		
 		critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
 		#print('critic grad')
 		#print(critic_grad)
-		self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables))
-		
+		self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables));
 		
 		with tf.GradientTape() as tape:
-			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False,bnorm=True);
+			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False);
 			#print(self.critic(pre_str_mem,next_actions))
 			#gradient ascent, using the critic that was just updated
-			self.actor_loss = -tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False))
+			self.actor_loss = -tf.reduce_mean(self.critic(pre_str_mem,next_actions));
 		
 		self.last_actor_loss = self.actor_loss.numpy()
 		#print(self.ctbg.trainable_variables)
-		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables)
-		#print(tf.math.reduce_max(self.actor_grad[1]))
-		self.ctbg_opt.apply_gradients(zip(self.actor_grad,self.ctbg.trainable_variables))
+		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables);
+		#print(self.actor_grad)
+		self.ctbg_opt.apply_gradients(zip(self.actor_grad,self.ctbg.trainable_variables));
 		self.log(2)
 		self.n_train += 1
 		self.memory.clear()
@@ -992,7 +949,6 @@ class Agent_3:
 				tf.summary.scalar('last reward',self.last_reward,step=self.n_step)
 			elif type == 2:
 				tf.summary.scalar('actor loss',self.actor_loss,step=self.n_train)
-				tf.summary.scalar('last avg reward',self.last_reward_avg,step=self.n_train)
 				#tf.summary.histogram('actor gradient',self.actor_grad[19],step=self.n_train)
 				tf.summary.scalar('critic loss',self.critic_loss,step=self.n_train)
 				#tf.summary.histogram('critic weights',self.critic.trainable_weights[0],step=self.n_train)
@@ -1007,13 +963,13 @@ trials = 1;
 if linux:
 	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 else:
 	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 
@@ -1030,28 +986,22 @@ for a in FORCE_SCALE.domain.values:
 										for k in UNIT_2.domain.values:
 											for l in UNIT_3.domain.values:
 												for m in TAU.domain.values:
-													for o in STD_MC.domain.values:
-														for t in range(trials):
-															hparams = {
-																		FORCE_SCALE: a,
-																		UPDATE_FREQ: b,
-																		TOLERANCE: c,
-																		MAX_STEPS: d,
-																		MAX_SESSIONS: e,
-																		CDIV: f,
-																		VAL_SCALE: g,
-																		LR_CTBG: h,
-																		LR_CRITIC: i,
-																		UNIT_1: j,
-																		UNIT_2: k,
-																		UNIT_3: l,
-																		TAU: m,
-																		STD_MC: o,
-																	}
+													for t in range(trials):
+														hparams = {
+																	FORCE_SCALE: a,
+																	UPDATE_FREQ: b,
+																	TOLERANCE: c,
+																	MAX_STEPS: d,
+																	MAX_SESSIONS: e,
+																	CDIV: f,
+																	VAL_SCALE: g,
+																	LR_CTBG: h,
+																	LR_CRITIC: i,
+																	UNIT_1: j,
+																	UNIT_2: k,
+																	UNIT_3: l,
+																	TAU: m,
+																}
 														mv_envs.append(moving_arm_env(hparams));
-														mv_envs[n].daemon = True
 														mv_envs[n].start();
 														n += 1;
-if manual_exit:
-	print('enter any input to exit')
-	exit = input()

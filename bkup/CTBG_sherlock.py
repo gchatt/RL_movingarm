@@ -588,34 +588,34 @@ class Motor_cortex(layers.Layer):
 		unit3 = units[2]
 		l1_sz = unit3
 		l2_sz = unit3
-		self.l1 = layers.Dense(l1_sz,activation='relu')
+		self.l1 = layers.Dense(l1_sz,activation='sigmoid')
 		if batch_norm:
 			self.bna = tf.keras.layers.BatchNormalization()
 			self.bnb = tf.keras.layers.BatchNormalization()
-		self.l2 = layers.Dense(l2_sz,activation='relu')
-		self.lout = layers.Dense(action_sz,activation='relu');
+		self.l2 = layers.Dense(l2_sz,activation='sigmoid')
+		self.lout = layers.Dense(action_sz,activation='sigmoid');
 		#self(tf.convert_to_tensor([np.zeros(state_sz,dtype='float32')]));
 	
-	def call(self,inputs,bnorm):
+	def call(self,inputs):
 		#takes input from mthal. In future, should get some input from premotor directly as well
 		x = self.l1(inputs);
 		if self.batch_norm:
-			x = self.bna(x,training=bnorm)
+			x = self.bna(x,training=True)
 		x = self.l2(x);
 		if self.batch_norm:
-			x = self.bnb(x,training=bnorm)
+			x = self.bnb(x,training=True)
 		action = self.lout(x)
 		return action
 		
 #I need to somehow add a random number of lateral inputs.....makes it very complex
 class CTBG(keras.Model):
-	def __init__(self,summary_writer,units,tau,std_mc):
+	def __init__(self,summary_writer,units,tau):
 		super(CTBG,self).__init__()
 		#self.hparams = hparams
 		self.units = units
 		
-		self.use_all = False
-		self.use_batch_norm = True
+		self.use_all = True
+		self.use_batch_norm = False
 		
 		if self.use_all:
 			self.dorsal_striatum = Striatum(units)
@@ -624,13 +624,13 @@ class CTBG(keras.Model):
 			self.gpi = GPi(units,str_dval=self.dorsal_striatum.dval)
 			self.mthal = Motor_thal(units)
 			self.premotor = Premotor(units)
-			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
+			self.mctx = Motor_cortex(units)
 		else:
-			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
+			self.mctx = Motor_cortex(units)
 		
 		self.std_all = 0.1
 		self.std_str = 0.5
-		self.std_mc = float(std_mc)
+		self.std_mc = 0.5
 		self.tau = float(tau)
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
@@ -642,25 +642,23 @@ class CTBG(keras.Model):
 		
 		self.summary_writer = summary_writer
 		self.n_step = 0
-		self.max_fr = 200
+		self.max_fr = 100
 		
 		self.inhibitory = -1 #set to 1 if you don't want to use it
 	
-	def call(self,str_inputs,prem_inputs,actor_loss,use_noisy_relaxation,bnorm):
+	def call(self,str_inputs,prem_inputs,actor_loss,use_noisy_relaxation):
 	
 		std_all = self.std_all
 		std_str = self.std_str
 		std_mc = self.std_mc
+		self.gn = layers.GaussianNoise(stddev=std_all)
+		self.gn_str = layers.GaussianNoise(stddev=std_str)
+		self.gn_mc = layers.GaussianNoise(stddev=std_mc)
 		
 		if use_noisy_relaxation:
 			std_all = std_all * np.exp(actor_loss/self.tau)
 			std_str = std_str * np.exp(actor_loss/self.tau)
 			std_mc = std_mc * np.exp(actor_loss/self.tau)
-	
-		
-		self.gn = layers.GaussianNoise(stddev=std_all)
-		self.gn_str = layers.GaussianNoise(stddev=std_str)
-		self.gn_mc = layers.GaussianNoise(stddev=std_mc)
 	
 		if self.use_all:
 			
@@ -715,12 +713,12 @@ class CTBG(keras.Model):
 			#mthal_out = tf.clip_by_value(mthal_out,0,self.max_fr)
 			#print(tf.math.reduce_min(mthal_out).numpy())
 			
-			mctx_out = self.mctx(mthal_out,bnorm)
+			mctx_out = self.mctx(mthal_out)
 			if use_noisy_relaxation:
 				mctx_out = self.gn_mc(mctx_out)
 			mctx_out = tf.clip_by_value(mctx_out,0,self.max_fr)
 		else:
-			mctx_out = self.mctx(prem_inputs,bnorm)
+			mctx_out = self.mctx(str_inputs)
 			if use_noisy_relaxation:
 				mctx_out = self.gn_mc(mctx_out)
 			mctx_out = tf.clip_by_value(mctx_out,0,self.max_fr)
