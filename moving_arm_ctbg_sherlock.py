@@ -62,7 +62,7 @@ UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
 
 #reward decay term
-TAU = hp.HParam('tau',hp.Discrete([0]))
+TAU = hp.HParam('tau',hp.Discrete([1]))
 
 #noise
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
@@ -868,6 +868,7 @@ class Agent_3:
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
+			self.ctbg.reset_noise()
 			self.goal = self.pfc.act(c_arm_pos,current_color)
 			#self.goal = tf.clip_by_value(self.goal,-2./9.,2./9.)
 			print(self.goal*self.pfc.pos_scale)

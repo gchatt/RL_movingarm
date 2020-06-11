@@ -632,7 +632,8 @@ class CTBG(keras.Model):
 		self.std_str = 0.5
 		self.std_mc = float(std_mc)
 		self.std_mc_init = self.std_mc
-		self.tau = float(tau)
+		#self.tau = float(tau)
+		self.tau = 0.1
 		self.beta = 0.001
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
@@ -760,6 +761,9 @@ class CTBG(keras.Model):
 		
 		
 		return mctx_out
+	
+	def reset_noise(self):
+		self.std_mc = self.std_mc_init
 	
 	def log(self,n_train):
 		if self.use_all:
