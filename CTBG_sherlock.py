@@ -631,7 +631,9 @@ class CTBG(keras.Model):
 		self.std_all = 0.1
 		self.std_str = 0.5
 		self.std_mc = float(std_mc)
+		self.std_mc_init = self.std_mc
 		self.tau = float(tau)
+		self.beta = 0.001
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
 		# self.bnb = tf.keras.layers.BatchNormalization()
@@ -646,16 +648,17 @@ class CTBG(keras.Model):
 		
 		self.inhibitory = -1 #set to 1 if you don't want to use it
 	
-	def call(self,str_inputs,prem_inputs,actor_loss,use_noisy_relaxation,bnorm):
+	def call(self,str_inputs,prem_inputs,loss,use_noisy_relaxation,bnorm):
 	
 		std_all = self.std_all
 		std_str = self.std_str
 		std_mc = self.std_mc
 		
 		if use_noisy_relaxation:
-			std_all = std_all * np.exp(actor_loss/self.tau)
-			std_str = std_str * np.exp(actor_loss/self.tau)
-			std_mc = std_mc * np.exp(actor_loss/self.tau)
+			#std_all = std_all * np.exp(loss/self.tau)
+			#std_str = std_str * np.exp(loss/self.tau)
+			std_mc = max(min(std_mc - self.beta*(loss - self.tau),self.std_mc_init),1.)
+			self.std_mc = std_mc
 	
 		
 		self.gn = layers.GaussianNoise(stddev=std_all)
@@ -779,3 +782,4 @@ class CTBG(keras.Model):
 			with self.summary_writer.as_default():
 				tf.summary.histogram('Motor Cortex Weights',self.mctx.trainable_weights[0],step=n_train)
 				tf.summary.histogram('Motor Cortex Biases',self.mctx.trainable_weights[1],step=n_train)
+				tf.summary.scalar('Noise',self.std_mc,step=n_train)

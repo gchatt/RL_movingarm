@@ -27,7 +27,7 @@ manual_exit = True
 FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5]))
 
 #How often to the run the 'train' subroutine
-UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([100]))
+UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
 
 #How far away from the rewarded position you can be to get some scaled reward
 TOLERANCE = hp.HParam('tolerance',hp.Discrete([100]))
@@ -59,13 +59,13 @@ UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
 UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 
 #premotor and motor cortex layer size
-UNIT_3 = hp.HParam('unit_3',hp.Discrete([400]))
+UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
 
 #reward decay term
-TAU = hp.HParam('tau',hp.Discrete([1]))
+TAU = hp.HParam('tau',hp.Discrete([0]))
 
 #noise
-STD_MC = hp.HParam('std_mc',hp.Discrete([10]))
+STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -345,7 +345,7 @@ class moving_arm_env(threading.Thread):
 		#If too close to the boundary, then reset (otherwise it will often get stuck there) and give a small negative reward
 		boundary_dist = np.sum(np.abs(max_pos - np.abs(self.c_arm_pos)));
 		boundary_punishment = 0.01 #scales the negative reward
-		boundary_tolerance = 5
+		boundary_tolerance = 0
 		if boundary_dist <= boundary_tolerance:
 			total_reward = np.negative(np.ones((1,self.num_reward_objects)))*boundary_punishment;
 		return total_reward
@@ -464,8 +464,8 @@ class Actor(keras.Model):
 class Critic_CTBG(keras.Model):
 	def __init__(self):
 		super(Critic_CTBG,self).__init__();
-		self.l1 = layers.Dense(400,activation='relu');
-		self.l2 = layers.Dense(400,activation='relu');
+		self.l1 = layers.Dense(1000,activation='relu');
+		self.l2 = layers.Dense(1000,activation='relu');
 		self.bna = tf.keras.layers.BatchNormalization()
 		self.bnb = tf.keras.layers.BatchNormalization()
 		self.lout = layers.Dense(1,activation='relu');
@@ -565,6 +565,9 @@ class Agent_MB:
 		self.met_goal = False
 		self.met_goal_count = 0
 		self.goal_attempt = 0
+		
+		self.n_check = 0
+		self.summary_writer = summary_writer
 	
 	def act(self,c_arm_pos,current_color):
 		self.met_goal = False
@@ -716,10 +719,10 @@ class Agent_MB:
 	def check_met_goal(self,goal,c_arm_pos):
 		goal = goal * self.pos_scale
 		binned_pos = self.full_pos_to_bins(c_arm_pos,self.bin_sz)
-		
+		self.n_check += 1
 		self.goal_attempt += 1
-		self.goal_thresh_1 = 200
-		self.goal_thresh_2 = 300
+		self.goal_thresh_1 = 100 #needs to be a hyperparameter
+		self.goal_thresh_2 = self.goal_thresh_1*self.hparams[MAX_STEPS]
 		
 		dist = np.sum(np.abs(binned_pos-goal)) #sum of the distance between the goal (binned) and the current position (binned) divided by 10
 		#1.5 is cutoff for being in the bin
@@ -732,12 +735,13 @@ class Agent_MB:
 			print(binned_pos)
 			print('dist')
 			print(dist)
-		thresh_1 = 5
+		thresh_1 = 20
+		zeta = 4
 		thresh_2 = 0
 		base = 100
 		reward = 0
 		if dist < thresh_1:
-			reward = base * np.exp(-dist)
+			reward = base * np.exp(-dist/zeta)
 			if dist <= thresh_2:
 				self.met_goal_count += 1 #if within the bin, then count this as met goal
 				#if it seems like you are meeting goal consistenty (ie 50% of the last 100 checks) then count this as met goal
@@ -750,7 +754,11 @@ class Agent_MB:
 		if self.goal_attempt >= self.goal_thresh_2:
 			self.goal_attempt = 0
 			self.met_goal_count = 0
-			
+		
+		with self.summary_writer.as_default():
+			tf.summary.scalar('Met goal count',self.met_goal_count,step=self.n_check)
+
+		
 		return reward
 	
 	def train(self):
@@ -836,7 +844,7 @@ class Agent_3:
 		#print(lr_critic)
 		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic)
 
-		self.gamma = 0.01 #discount parameter when calculating Q
+		self.gamma = 0.05 #discount parameter when calculating Q
 		
 		self.max_fr = 20.
 		self.last_state = []
@@ -855,10 +863,13 @@ class Agent_3:
 		self.last_actor_loss = 0
 		self.last_reward_avg = 0
 		
+		self.tde = 0
+		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
-			self.goal = tf.clip_by_value(self.pfc.act(c_arm_pos,current_color),-2./9.,2./9.)
+			self.goal = self.pfc.act(c_arm_pos,current_color)
+			#self.goal = tf.clip_by_value(self.goal,-2./9.,2./9.)
 			print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
@@ -868,7 +879,7 @@ class Agent_3:
 		str_inputs = layers.concatenate([goal,current_color,c_arm_pos,self.last_action_tensor])
 		prem_inputs = layers.concatenate([goal,current_color,c_arm_pos])
 		self.last_state = copy.deepcopy([str_inputs,prem_inputs])
-		action = self.ctbg(str_inputs,prem_inputs,self.last_reward_avg,use_noisy_relaxation=True,bnorm=False)
+		action = self.ctbg(str_inputs,prem_inputs,self.tde,use_noisy_relaxation=True,bnorm=False)
 
 		self.last_action_tensor = copy.deepcopy(action)
 		#action_fr = tf.math.multiply(self.max_fr,action)
@@ -954,12 +965,14 @@ class Agent_3:
 			#print(tf.math.reduce_max(target_Q))
 			#print(tf.math.reduce_max(td_errors))
 			#td_errors = (target_Q - current_Q)**2
-			self.critic_loss = tf.reduce_mean(td_errors);
-		
+			self.critic_loss = tf.reduce_mean(td_errors);	
 		critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
 		#print('critic grad')
 		#print(critic_grad)
 		self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables))
+		
+		self.tde = target_Q - current_Q
+		self.tde = tf.reduce_mean(self.tde)
 		
 		
 		with tf.GradientTape() as tape:
@@ -995,6 +1008,7 @@ class Agent_3:
 				tf.summary.scalar('last avg reward',self.last_reward_avg,step=self.n_train)
 				#tf.summary.histogram('actor gradient',self.actor_grad[19],step=self.n_train)
 				tf.summary.scalar('critic loss',self.critic_loss,step=self.n_train)
+				tf.summary.scalar('raw TD error',self.tde,step=self.n_train)
 				#tf.summary.histogram('critic weights',self.critic.trainable_weights[0],step=self.n_train)
 
 			
