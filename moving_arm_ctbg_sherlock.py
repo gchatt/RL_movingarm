@@ -22,50 +22,98 @@ linux = False
 manual_exit = True
 #use_target_networks = True
 
+manual_hparams = []
 #Output from the agent is scaled by max_firing rate; this number is a relation between firing rate of the output neuron and how much the arm moves at that time_step. > 40 is too high without noise.
 #Lower values mean more movement of the arm (can substitute for high noise?)
 FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5]))
+manual_hparams.append(FORCE_SCALE)
+
 
 #How often to the run the 'train' subroutine
-UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
+UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([5]))
+manual_hparams.append(UPDATE_FREQ)
 
 #How far away from the rewarded position you can be to get some scaled reward
 TOLERANCE = hp.HParam('tolerance',hp.Discrete([100]))
+manual_hparams.append(TOLERANCE)
 
 #Number of steps in each session. Previously it has been found that this number needs to be > 1000 for proper exploration before a reset
 MAX_STEPS = hp.HParam('max_steps',hp.Discrete([5]))
+manual_hparams.append(MAX_STEPS)
 
 #How many sessions before stopping the program
 MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([100000]))
+manual_hparams.append(MAX_SESSIONS)
 
 #CDIV = how much to power the color vector; 255 means fully normalized; smaller values means color vector has higher magnitude
 CDIV = hp.HParam('cdiv',hp.Discrete([255]))
+manual_hparams.append(CDIV)
 
 #VAL_SCALE = how high the reward is valued. scalar. High values mean higher valued reward. Idea here is that maybe this drives larger gradients?
 VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
+manual_hparams.append(VAL_SCALE)
 
 #Learning rate for CTBG object in main agent
-LR_CTBG = hp.HParam('lr_ctbg',hp.RealInterval(0.001,0.001))
-LR_CTBG_DRAW = 1
+LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.001]))
+#LR_CTBG_DRAW = 1
+manual_hparams.append(LR_CTBG)
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
-LR_CRITIC = hp.HParam('lr_critic',hp.RealInterval(0.001,0.001))
-LR_CRITIC_DRAW = 1
+LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.001]))
+#LR_CRITIC_DRAW = 1
+manual_hparams.append(LR_CRITIC)
+#Gamma = discount paramater when calculating Q value in critic network
+#lower values are better for the simple task of just getting to one location because it is not a very multistep process
+GAMMA = hp.HParam('gamma',hp.Discrete([0.05]))
+#GAMMA_DRAW = 1
+manual_hparams.append(GAMMA)
+
 
 #striatum division size (multiply by 3 for total size)
 UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
+manual_hparams.append(UNIT_1)
 
 #other nuclei division size (multiply by 3 for total size)
 UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
+manual_hparams.append(UNIT_2)
 
 #premotor and motor cortex layer size
 UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
+manual_hparams.append(UNIT_3)
 
-#reward decay term
-TAU = hp.HParam('tau',hp.Discrete([1]))
-
-#noise
+#Noise parameters
+#noise = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),1.)
+#min of noise 1, max noise of the initial noise term (e.g. 90)
+#loss is TDE (raw)
+TAU = hp.HParam('tau',hp.Discrete([0.1]))
+manual_hparams.append(TAU)
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
+manual_hparams.append(STD_MC)
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.001]))
+manual_hparams.append(NOISE_SCALE)
+
+#Relevant for when the model free agent is trying to reach the MB agents goal. What success rate defines 'meeting the goal' and allows the MB agent to move on?
+#100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
+#This 50% ratio appears to be doable and working; you could argue it's too low but I think 50% is a good mark
+GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([100]))
+GOALS_MET_THRESH_2 = hp.HParam('goals_met_thresh_2',hp.Discrete([200]))
+manual_hparams.append(GOALS_MET_THRESH_1)
+manual_hparams.append(GOALS_MET_THRESH_2)
+
+#Relevant for when the model free agent is trying to reach the MB agents goal.
+#These terms define the reward the MF agent critic receives based on how close it is to the MB agents goal position
+#There is no real reason to make this sparse...since it is internal
+#GOAL_DIST_1; distances less than this number are rewarded; distances above are not
+#using an L1 distance
+#reward function -> reward = reward_base * exp(-L1_dist / dist_scale)
+#-np.exp((dist - thresh_1)/dist_scale) to give negative reward
+GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([30]))
+DIST_SCALE = hp.HParam('dist_scale',hp.Discrete([5]))
+REWARD_BASE = hp.HParam('reward_base',hp.Discrete([100]))
+manual_hparams.append(GOAL_DIST_1)
+manual_hparams.append(DIST_SCALE)
+manual_hparams.append(REWARD_BASE)
+
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -721,11 +769,11 @@ class Agent_MB:
 		binned_pos = self.full_pos_to_bins(c_arm_pos,self.bin_sz)
 		self.n_check += 1
 		self.goal_attempt += 1
-		self.goal_thresh_1 = 100 #needs to be a hyperparameter
-		self.goal_thresh_2 = self.goal_thresh_1*self.hparams[MAX_STEPS]
+		self.goal_thresh_1 = self.hparams[GOALS_MET_THRESH_1] #needs to be a hyperparameter
+		self.goal_thresh_2 = self.hparams[GOALS_MET_THRESH_1] #hyperparam, tough one
 		
-		dist = np.sum(np.abs(binned_pos-goal)) #sum of the distance between the goal (binned) and the current position (binned) divided by 10
-		#1.5 is cutoff for being in the bin
+		dist = np.sum(np.abs(binned_pos-goal)) #sum of the distance between the goal (binned) and the current position (binned)
+		
 		#print('dist')
 		#print(dist)
 		if verbose:
@@ -735,13 +783,13 @@ class Agent_MB:
 			print(binned_pos)
 			print('dist')
 			print(dist)
-		thresh_1 = 20
-		zeta = 4
+		thresh_1 = self.hparams[GOAL_DIST_1]
+		dist_scale = self.hparams[DIST_SCALE]
 		thresh_2 = 0
-		base = 100
+		base = self.hparams[REWARD_BASE]
 		reward = 0
 		if dist < thresh_1:
-			reward = base * np.exp(-dist/zeta)
+			reward = base * np.exp(-dist/dist_scale)
 			if dist <= thresh_2:
 				self.met_goal_count += 1 #if within the bin, then count this as met goal
 				#if it seems like you are meeting goal consistenty (ie 50% of the last 100 checks) then count this as met goal
@@ -751,13 +799,15 @@ class Agent_MB:
 					self.met_goal_count = 0
 					if verbose:
 						print('met goal!')
-		if self.goal_attempt >= self.goal_thresh_2:
-			self.goal_attempt = 0
-			self.met_goal_count = 0
-		
+		else:
+			reward = -np.exp((dist - thresh_1)/(dist_scale*2))
+						
 		with self.summary_writer.as_default():
 			tf.summary.scalar('Met goal count',self.met_goal_count,step=self.n_check)
 
+		if self.goal_attempt >= self.goal_thresh_2:
+			self.goal_attempt = 0
+			self.met_goal_count = 0
 		
 		return reward
 	
@@ -844,7 +894,7 @@ class Agent_3:
 		#print(lr_critic)
 		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic)
 
-		self.gamma = 0.05 #discount parameter when calculating Q
+		self.gamma = self.hparams[GAMMA] #discount parameter when calculating Q
 		
 		self.max_fr = 20.
 		self.last_state = []
@@ -1022,51 +1072,115 @@ trials = 1;
 if linux:
 	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,REWARD_BASE,NOISE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 else:
 	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,REWARD_BASE,NOISE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 
-for a in FORCE_SCALE.domain.values:
-	for b in UPDATE_FREQ.domain.values:
-		for c in TOLERANCE.domain.values:
-			for d in MAX_STEPS.domain.values:
-				for e in MAX_SESSIONS.domain.values:
-					for f in CDIV.domain.values:
-						for g in VAL_SCALE.domain.values:
-							for h in np.random.uniform(LR_CTBG.domain.min_value,LR_CTBG.domain.max_value,[LR_CTBG_DRAW]):
-								for i in np.random.uniform(LR_CRITIC.domain.min_value,LR_CRITIC.domain.max_value,[LR_CRITIC_DRAW]):
-									for j in UNIT_1.domain.values:
-										for k in UNIT_2.domain.values:
-											for l in UNIT_3.domain.values:
-												for m in TAU.domain.values:
-													for o in STD_MC.domain.values:
-														for t in range(trials):
-															hparams = {
-																		FORCE_SCALE: a,
-																		UPDATE_FREQ: b,
-																		TOLERANCE: c,
-																		MAX_STEPS: d,
-																		MAX_SESSIONS: e,
-																		CDIV: f,
-																		VAL_SCALE: g,
-																		LR_CTBG: h,
-																		LR_CRITIC: i,
-																		UNIT_1: j,
-																		UNIT_2: k,
-																		UNIT_3: l,
-																		TAU: m,
-																		STD_MC: o,
-																	}
-														mv_envs.append(moving_arm_env(hparams));
-														mv_envs[n].daemon = True
-														mv_envs[n].start();
-														n += 1;
+hparams = {}
+hp_mult = []
+hp_mult_num = []
+for hyper_param in manual_hparams:
+	if len(hyper_param.domain.values) == 1:
+		hparams[hyper_param] = hyper_param.domain.values[0]
+	elif len(hyper_param.domain.values) > 1:
+		hp_mult.append(hyper_param)
+		hp_mult_num.append(len(hyper_param.domain.values))
+
+hp_mult_count = np.zeros(len(hp_mult))
+
+if len(hp_mult) > 0:
+	done = False
+	n = 0
+	num_trials = 1
+	while not done:
+		for i in range(len(hp_mult)):
+			hparams[hp_mult[i]] = hp_mult[i].domain.values[int(hp_mult_count[i])]
+		for num_trial in range(num_trials):
+			mv_envs.append(moving_arm_env(hparams))
+			mv_envs[n].daemon = True
+			mv_envs[n].start()
+			n += 1
+			
+		for i in range(len(hp_mult)):
+			if int(hp_mult_count[i]+1) >= hp_mult_num[i]:
+				done = True
+			else:
+				done = False
+		
+		if done:
+			break
+		
+		for i in range(len(hp_mult)):
+			if i == 0:
+				hp_mult_count[i] += 1
+			if int(hp_mult_count[i]) >= hp_mult_num[i]:
+				hp_mult_count[i] = 0
+				if (i+1) != len(hp_mult):
+					hp_mult_count[i+1] += 1
+else:
+	mv_envs.append(moving_arm_env(hparams))
+	mv_envs[0].daemon = True
+	mv_envs[0].start()
+	
+
+
+			
+	
+
+
+
+# for a in FORCE_SCALE.domain.values:
+	# for b in UPDATE_FREQ.domain.values:
+		# for c in TOLERANCE.domain.values:
+			# for d in MAX_STEPS.domain.values:
+				# for e in MAX_SESSIONS.domain.values:
+					# for f in CDIV.domain.values:
+						# for g in VAL_SCALE.domain.values:
+							# for h in np.random.uniform(LR_CTBG.domain.min_value,LR_CTBG.domain.max_value,[LR_CTBG_DRAW]):
+								# for i in np.random.uniform(LR_CRITIC.domain.min_value,LR_CRITIC.domain.max_value,[LR_CRITIC_DRAW]):
+									# for j in UNIT_1.domain.values:
+										# for k in UNIT_2.domain.values:
+											# for l in UNIT_3.domain.values:
+												# for m in TAU.domain.values:
+													# for o in STD_MC.domain.values:
+														# for p in np.random.uniform(GAMMA.domain.min_value,GAMMA.domain.max_value,[GAMMA_DRAW]):
+															# for q in GOALS_MET_THRESH_1.domain.values:
+																# for r in GOALS_MET_THRESH_2.domain.values:
+																	# for s in GOAL_DIST_1.domain.values:
+																		# for u in DIST_SCALE.domain.values:
+																			# for v in REWARD_BASE.domain.values:
+																				# for trial in range(trials):
+																					# hparams = {
+																								# FORCE_SCALE: a,
+																								# UPDATE_FREQ: b,
+																								# TOLERANCE: c,
+																								# MAX_STEPS: d,
+																								# MAX_SESSIONS: e,
+																								# CDIV: f,
+																								# VAL_SCALE: g,
+																								# LR_CTBG: h,
+																								# LR_CRITIC: i,
+																								# UNIT_1: j,
+																								# UNIT_2: k,
+																								# UNIT_3: l,
+																								# TAU: m,
+																								# STD_MC: o,
+																								# GAMMA: p,
+																								# GOALS_MET_THRESH_1: r,
+																								# GOALS_MET_THRESH_2: s,
+																								# DIST_SCALE: u,
+																								# REWARD_BASE: v,
+																							# }
+																				# mv_envs.append(moving_arm_env(hparams));
+																				# mv_envs[n].daemon = True
+																				# mv_envs[n].start();
+																				# n += 1;
 if manual_exit:
 	print('enter any input to exit')
 	exit = input()

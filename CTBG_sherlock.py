@@ -632,8 +632,7 @@ class CTBG(keras.Model):
 		self.std_str = 0.5
 		self.std_mc = float(std_mc)
 		self.std_mc_init = self.std_mc
-		#self.tau = float(tau)
-		self.tau = 0.1
+		self.tau = tau
 		self.beta = 0.001
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
