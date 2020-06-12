@@ -81,6 +81,10 @@ manual_hparams.append(UNIT_2)
 UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
 manual_hparams.append(UNIT_3)
 
+#critic units
+CRITIC_UNITS = hp.HParam('critic_units',hp.Discrete([1000]))
+manual_hparams.append(CRITIC_UNITS)
+
 #Noise parameters
 #noise = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),1.)
 #min of noise 1, max noise of the initial noise term (e.g. 90)
@@ -510,10 +514,10 @@ class Actor(keras.Model):
 		# return q_val
 		
 class Critic_CTBG(keras.Model):
-	def __init__(self):
+	def __init__(self,hparams):
 		super(Critic_CTBG,self).__init__();
-		self.l1 = layers.Dense(1000,activation='relu');
-		self.l2 = layers.Dense(1000,activation='relu');
+		self.l1 = layers.Dense(hparams[CRITIC_UNITS],activation='relu');
+		self.l2 = layers.Dense(hparams[CRITIC_UNITS],activation='relu');
 		self.bna = tf.keras.layers.BatchNormalization()
 		self.bnb = tf.keras.layers.BatchNormalization()
 		self.lout = layers.Dense(1,activation='relu');
@@ -889,7 +893,7 @@ class Agent_3:
 		#print(lr_ctbg)
 		self.ctbg_opt = tf.keras.optimizers.Adam(learning_rate=lr_ctbg)
 		
-		self.critic = Critic_CTBG()
+		self.critic = Critic_CTBG(hparams)
 		lr_critic = self.hparams[LR_CRITIC]
 		#print(lr_critic)
 		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic)
@@ -969,9 +973,9 @@ class Agent_3:
 		if self.pfc.met_goal:
 			self.pfc.update_memory(c_arm_pos,current_color,reward)
 			total_reward += valuated_reward
-		else:
-			if total_reward == 0 and valuated_reward < 0:
-				total_reward = valuated_reward
+		# else:
+			# if total_reward == 0 and valuated_reward < 0:
+				# total_reward = valuated_reward
 		#pfc_pred_reward = self.pfc.**
 		self.last_reward = total_reward
 		self.c_arm_pos_new = c_arm_pos
@@ -1103,7 +1107,8 @@ if len(hp_mult) > 0:
 			hparams[hp_mult[i]] = hp_mult[i].domain.values[int(hp_mult_count[i])]
 		for num_trial in range(num_trials):
 			mv_envs.append(moving_arm_env(hparams))
-			mv_envs[n].daemon = True
+			if not linux:
+				mv_envs[n].daemon = True
 			mv_envs[n].start()
 			n += 1
 			
@@ -1125,62 +1130,11 @@ if len(hp_mult) > 0:
 					hp_mult_count[i+1] += 1
 else:
 	mv_envs.append(moving_arm_env(hparams))
-	mv_envs[0].daemon = True
+	if not linux:
+		mv_envs[0].daemon = True
 	mv_envs[0].start()
 	
-
-
-			
 	
-
-
-
-# for a in FORCE_SCALE.domain.values:
-	# for b in UPDATE_FREQ.domain.values:
-		# for c in TOLERANCE.domain.values:
-			# for d in MAX_STEPS.domain.values:
-				# for e in MAX_SESSIONS.domain.values:
-					# for f in CDIV.domain.values:
-						# for g in VAL_SCALE.domain.values:
-							# for h in np.random.uniform(LR_CTBG.domain.min_value,LR_CTBG.domain.max_value,[LR_CTBG_DRAW]):
-								# for i in np.random.uniform(LR_CRITIC.domain.min_value,LR_CRITIC.domain.max_value,[LR_CRITIC_DRAW]):
-									# for j in UNIT_1.domain.values:
-										# for k in UNIT_2.domain.values:
-											# for l in UNIT_3.domain.values:
-												# for m in TAU.domain.values:
-													# for o in STD_MC.domain.values:
-														# for p in np.random.uniform(GAMMA.domain.min_value,GAMMA.domain.max_value,[GAMMA_DRAW]):
-															# for q in GOALS_MET_THRESH_1.domain.values:
-																# for r in GOALS_MET_THRESH_2.domain.values:
-																	# for s in GOAL_DIST_1.domain.values:
-																		# for u in DIST_SCALE.domain.values:
-																			# for v in REWARD_BASE.domain.values:
-																				# for trial in range(trials):
-																					# hparams = {
-																								# FORCE_SCALE: a,
-																								# UPDATE_FREQ: b,
-																								# TOLERANCE: c,
-																								# MAX_STEPS: d,
-																								# MAX_SESSIONS: e,
-																								# CDIV: f,
-																								# VAL_SCALE: g,
-																								# LR_CTBG: h,
-																								# LR_CRITIC: i,
-																								# UNIT_1: j,
-																								# UNIT_2: k,
-																								# UNIT_3: l,
-																								# TAU: m,
-																								# STD_MC: o,
-																								# GAMMA: p,
-																								# GOALS_MET_THRESH_1: r,
-																								# GOALS_MET_THRESH_2: s,
-																								# DIST_SCALE: u,
-																								# REWARD_BASE: v,
-																							# }
-																				# mv_envs.append(moving_arm_env(hparams));
-																				# mv_envs[n].daemon = True
-																				# mv_envs[n].start();
-																				# n += 1;
-if manual_exit:
+if (not linux) and manual_exit:
 	print('enter any input to exit')
 	exit = input()
