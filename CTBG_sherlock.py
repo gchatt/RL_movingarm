@@ -609,9 +609,11 @@ class Motor_cortex(layers.Layer):
 		
 #I need to somehow add a random number of lateral inputs.....makes it very complex
 class CTBG(keras.Model):
-	def __init__(self,summary_writer,units,tau,std_mc):
+	def __init__(self,summary_writer,hparams):
 		super(CTBG,self).__init__()
 		#self.hparams = hparams
+
+		units = [hparams['UNIT_1'],hparams['UNIT_2'],hparams['UNIT_3']]
 		self.units = units
 		
 		self.use_all = False
@@ -630,10 +632,11 @@ class CTBG(keras.Model):
 		
 		self.std_all = 0.1
 		self.std_str = 0.5
-		self.std_mc = float(std_mc)
+		self.std_mc = hparams['STD_MC']
 		self.std_mc_init = self.std_mc
-		self.tau = tau
-		self.beta = 0.001
+		self.tau = hparams['TAU']
+		self.noise_scale = hparams['NOISE_SCALE']
+		self.noise_base = hparams['NOISE_BASE']
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
 		# self.bnb = tf.keras.layers.BatchNormalization()
@@ -657,7 +660,7 @@ class CTBG(keras.Model):
 		if use_noisy_relaxation:
 			#std_all = std_all * np.exp(loss/self.tau)
 			#std_str = std_str * np.exp(loss/self.tau)
-			std_mc = max(min(std_mc - self.beta*(loss - self.tau),self.std_mc_init),1.)
+			std_mc = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),self.noise_base)
 			self.std_mc = std_mc
 	
 		

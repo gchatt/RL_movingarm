@@ -30,7 +30,7 @@ manual_hparams.append(FORCE_SCALE)
 
 
 #How often to the run the 'train' subroutine
-UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([5]))
+UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
 manual_hparams.append(UPDATE_FREQ)
 
 #How far away from the rewarded position you can be to get some scaled reward
@@ -86,7 +86,7 @@ CRITIC_UNITS = hp.HParam('critic_units',hp.Discrete([1000]))
 manual_hparams.append(CRITIC_UNITS)
 
 #Noise parameters
-#noise = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),1.)
+#noise = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),noise_base)
 #min of noise 1, max noise of the initial noise term (e.g. 90)
 #loss is TDE (raw)
 TAU = hp.HParam('tau',hp.Discrete([0.1]))
@@ -95,6 +95,13 @@ STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
 NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.001]))
 manual_hparams.append(NOISE_SCALE)
+NOISE_BASE = hp.HParam('noise_base',hp.Discrete([5.0]))
+manual_hparams.append(NOISE_BASE)
+
+#TDE scale. Scales the target_Q vs. current_Q. TDE = target_Q * tde_scale - current_Q
+#Positive values give some bias to reward vs. prediction
+TDE_SCALE = hp.HParam('tde_scale',hp.Discrete([1.1]))
+manual_hparams.append(TDE_SCALE)
 
 #Relevant for when the model free agent is trying to reach the MB agents goal. What success rate defines 'meeting the goal' and allows the MB agent to move on?
 #100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
@@ -110,12 +117,14 @@ manual_hparams.append(GOALS_MET_THRESH_2)
 #GOAL_DIST_1; distances less than this number are rewarded; distances above are not
 #using an L1 distance
 #reward function -> reward = reward_base * exp(-L1_dist / dist_scale)
-#-np.exp((dist - thresh_1)/dist_scale) to give negative reward
-GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([30]))
+#-np.exp((dist - thresh_1)/neg_dist_scale) to give negative reward
+GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([20]))
 DIST_SCALE = hp.HParam('dist_scale',hp.Discrete([5]))
+NEG_DIST_SCALE = hp.HParam('neg_dist_scale',hp.Discrete([100]))
 REWARD_BASE = hp.HParam('reward_base',hp.Discrete([100]))
 manual_hparams.append(GOAL_DIST_1)
 manual_hparams.append(DIST_SCALE)
+manual_hparams.append(NEG_DIST_SCALE)
 manual_hparams.append(REWARD_BASE)
 
 
@@ -789,6 +798,7 @@ class Agent_MB:
 			print(dist)
 		thresh_1 = self.hparams[GOAL_DIST_1]
 		dist_scale = self.hparams[DIST_SCALE]
+		neg_dist_scale = self.hparams[NEG_DIST_SCALE]
 		thresh_2 = 0
 		base = self.hparams[REWARD_BASE]
 		reward = 0
@@ -804,7 +814,7 @@ class Agent_MB:
 					if verbose:
 						print('met goal!')
 		else:
-			reward = -np.exp((dist - thresh_1)/(dist_scale*2))
+			reward = -np.exp((dist - thresh_1)/(neg_dist_scale))
 						
 		with self.summary_writer.as_default():
 			tf.summary.scalar('Met goal count',self.met_goal_count,step=self.n_check)
@@ -886,9 +896,18 @@ class Agent_3:
 	
 		self.pfc = Agent_MB(min_arm_p,max_arm_p,n_arms,reward_sz,summary_writer,self.hparams)
 		
-		units = [self.hparams[UNIT_1],self.hparams[UNIT_2],self.hparams[UNIT_3]]
+		#units = [self.hparams[UNIT_1],self.hparams[UNIT_2],self.hparams[UNIT_3]]
 		#print(units)
-		self.ctbg = CTBG.CTBG(summary_writer,units,self.hparams[TAU],self.hparams[STD_MC])
+		ctbg_params = {}
+		ctbg_params['UNIT_1'] = self.hparams[UNIT_1]
+		ctbg_params['UNIT_2'] = self.hparams[UNIT_2]
+		ctbg_params['UNIT_3'] = self.hparams[UNIT_3]
+		ctbg_params['STD_MC'] = self.hparams[STD_MC]
+		ctbg_params['TAU'] = self.hparams[TAU]
+		ctbg_params['NOISE_SCALE'] = self.hparams[NOISE_SCALE]
+		ctbg_params['NOISE_BASE'] = self.hparams[NOISE_BASE]
+		
+		self.ctbg = CTBG.CTBG(summary_writer,ctbg_params)
 		lr_ctbg = self.hparams[LR_CTBG]
 		#print(lr_ctbg)
 		self.ctbg_opt = tf.keras.optimizers.Adam(learning_rate=lr_ctbg)
@@ -1025,8 +1044,8 @@ class Agent_3:
 		#print('critic grad')
 		#print(critic_grad)
 		self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables))
-		
-		self.tde = target_Q - current_Q
+		tde_scale = self.hparams[TDE_SCALE]
+		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
 		
 		
@@ -1076,13 +1095,13 @@ trials = 1;
 if linux:
 	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,REWARD_BASE,NOISE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_BASE,TDE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 else:
 	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,REWARD_BASE,NOISE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_BASE,TDE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 
