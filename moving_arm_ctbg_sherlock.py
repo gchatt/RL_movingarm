@@ -20,6 +20,8 @@ if GUI:
 	import pygame
 linux = False
 manual_exit = True
+if linux:
+	manual_exit = False
 #use_target_networks = True
 
 manual_hparams = []
@@ -100,7 +102,7 @@ manual_hparams.append(NOISE_BASE)
 
 #TDE scale. Scales the target_Q vs. current_Q. TDE = target_Q * tde_scale - current_Q
 #Positive values give some bias to reward vs. prediction
-TDE_SCALE = hp.HParam('tde_scale',hp.Discrete([1.1]))
+TDE_SCALE = hp.HParam('tde_scale',hp.Discrete([1.01]))
 manual_hparams.append(TDE_SCALE)
 
 #Relevant for when the model free agent is trying to reach the MB agents goal. What success rate defines 'meeting the goal' and allows the MB agent to move on?
@@ -174,6 +176,11 @@ class moving_arm_env(threading.Thread):
 		
 		self.update_freq = self.hparams[UPDATE_FREQ]
 		
+		#min dist away the rewarded position can be from the edge
+		#prevents the reward from being right at edge of max/min position
+		#must be an integer
+		self.edge = 10
+		
 		current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
 		param_str = str({h.name: hparams[h] for h in hparams})
 		if linux:
@@ -206,7 +213,7 @@ class moving_arm_env(threading.Thread):
 			for n in range(self.num_rewards_per_color):
 				reward_position = [];
 				for x in range(self.num_arms):
-					reward_position.append(random.randint(self.min_arm_position,self.max_arm_position)); #choose positions that are rewarded for that color
+					reward_position.append(random.randint(self.min_arm_position+self.edge,self.max_arm_position-self.edge)); #choose positions that are rewarded for that color
 				reward_object_vector = [];
 				max_amount = 20; #max amount you can have of an object
 				min_amount = 10;
@@ -943,7 +950,7 @@ class Agent_3:
 		if self.n_step == 0 or self.pfc.met_goal: #question
 			self.ctbg.reset_noise()
 			self.goal = self.pfc.act(c_arm_pos,current_color)
-			#self.goal = tf.clip_by_value(self.goal,-2./9.,2./9.)
+			self.goal = tf.clip_by_value(self.goal,-8./9.,8./9.)
 			print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
