@@ -95,9 +95,9 @@ TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.001]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.01]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_BASE = hp.HParam('noise_base',hp.Discrete([5.0]))
+NOISE_BASE = hp.HParam('noise_base',hp.Discrete([2.0]))
 manual_hparams.append(NOISE_BASE)
 
 #TDE scale. Scales the target_Q vs. current_Q. TDE = target_Q * tde_scale - current_Q
@@ -1054,7 +1054,7 @@ class Agent_3:
 		tde_scale = self.hparams[TDE_SCALE]
 		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
-		
+		self.ctbg.update_noise(self.tde)
 		
 		with tf.GradientTape() as tape:
 			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False,bnorm=True);
@@ -1129,6 +1129,18 @@ if len(hp_mult) > 0:
 	n = 0
 	num_trials = 1
 	while not done:
+		#check if at max
+		#print(len(hp_mult))
+		for i in range(len(hp_mult)):
+			#print(i)
+			#print(hp_mult_count[i])
+			if int(hp_mult_count[i]+1) >= hp_mult_num[i]:
+				done = True
+			else:
+				done = False
+				break
+				
+		#continue and initiate threads
 		for i in range(len(hp_mult)):
 			hparams[hp_mult[i]] = hp_mult[i].domain.values[int(hp_mult_count[i])]
 		for num_trial in range(num_trials):
@@ -1138,12 +1150,7 @@ if len(hp_mult) > 0:
 			mv_envs[n].start()
 			n += 1
 			
-		for i in range(len(hp_mult)):
-			if int(hp_mult_count[i]+1) >= hp_mult_num[i]:
-				done = True
-			else:
-				done = False
-		
+		#if done from earlier check, break
 		if done:
 			break
 		

@@ -651,17 +651,20 @@ class CTBG(keras.Model):
 		
 		self.inhibitory = -1 #set to 1 if you don't want to use it
 	
+	def update_noise(self,tde):
+		self.std_mc = max(min(self.std_mc - self.noise_scale*(tde - self.tau),self.std_mc_init),self.noise_base)
+	
 	def call(self,str_inputs,prem_inputs,loss,use_noisy_relaxation,bnorm):
 	
 		std_all = self.std_all
 		std_str = self.std_str
 		std_mc = self.std_mc
 		
-		if use_noisy_relaxation:
+		#if use_noisy_relaxation:
 			#std_all = std_all * np.exp(loss/self.tau)
 			#std_str = std_str * np.exp(loss/self.tau)
-			std_mc = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),self.noise_base)
-			self.std_mc = std_mc
+			#std_mc = max(min(std_mc - self.noise_scale*(loss - self.tau),self.std_mc_init),self.noise_base)
+			#self.std_mc = std_mc
 	
 		
 		self.gn = layers.GaussianNoise(stddev=std_all)
