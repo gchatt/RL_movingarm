@@ -27,7 +27,7 @@ if linux:
 manual_hparams = []
 #Output from the agent is scaled by max_firing rate; this number is a relation between firing rate of the output neuron and how much the arm moves at that time_step. > 40 is too high without noise.
 #Lower values mean more movement of the arm (can substitute for high noise?)
-FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([5]))
+FORCE_SCALE = hp.HParam('force_scale',hp.Discrete([1]))
 manual_hparams.append(FORCE_SCALE)
 
 
@@ -44,7 +44,7 @@ MAX_STEPS = hp.HParam('max_steps',hp.Discrete([5]))
 manual_hparams.append(MAX_STEPS)
 
 #How many sessions before stopping the program
-MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([100000]))
+MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([1000000]))
 manual_hparams.append(MAX_SESSIONS)
 
 #CDIV = how much to power the color vector; 255 means fully normalized; smaller values means color vector has higher magnitude
@@ -97,18 +97,20 @@ STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
 NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.01]))
 manual_hparams.append(NOISE_SCALE)
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.009]))
+manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([2.0]))
 manual_hparams.append(NOISE_BASE)
 
 #TDE scale. Scales the target_Q vs. current_Q. TDE = target_Q * tde_scale - current_Q
 #Positive values give some bias to reward vs. prediction
-TDE_SCALE = hp.HParam('tde_scale',hp.Discrete([1.01]))
+TDE_SCALE = hp.HParam('tde_scale',hp.Discrete([1.02]))
 manual_hparams.append(TDE_SCALE)
 
 #Relevant for when the model free agent is trying to reach the MB agents goal. What success rate defines 'meeting the goal' and allows the MB agent to move on?
 #100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
 #This 50% ratio appears to be doable and working; you could argue it's too low but I think 50% is a good mark
-GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([100]))
+GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([20]))
 GOALS_MET_THRESH_2 = hp.HParam('goals_met_thresh_2',hp.Discrete([200]))
 manual_hparams.append(GOALS_MET_THRESH_1)
 manual_hparams.append(GOALS_MET_THRESH_2)
@@ -120,7 +122,7 @@ manual_hparams.append(GOALS_MET_THRESH_2)
 #using an L1 distance
 #reward function -> reward = reward_base * exp(-L1_dist / dist_scale)
 #-np.exp((dist - thresh_1)/neg_dist_scale) to give negative reward
-GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([20]))
+GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([15]))
 DIST_SCALE = hp.HParam('dist_scale',hp.Discrete([5]))
 NEG_DIST_SCALE = hp.HParam('neg_dist_scale',hp.Discrete([100]))
 REWARD_BASE = hp.HParam('reward_base',hp.Discrete([100]))
@@ -532,10 +534,12 @@ class Actor(keras.Model):
 class Critic_CTBG(keras.Model):
 	def __init__(self,hparams):
 		super(Critic_CTBG,self).__init__();
-		self.l1 = layers.Dense(hparams[CRITIC_UNITS],activation='relu');
-		self.l2 = layers.Dense(hparams[CRITIC_UNITS],activation='relu');
+		self.l1 = layers.Dense(hparams[UNIT_3],activation='relu');
+		self.l2 = layers.Dense(hparams[UNIT_3],activation='relu');
+		self.l3 = layers.Dense(hparams[UNIT_3],activation='relu');
 		self.bna = tf.keras.layers.BatchNormalization()
 		self.bnb = tf.keras.layers.BatchNormalization()
+		self.bnc = tf.keras.layers.BatchNormalization()
 		self.lout = layers.Dense(1,activation='relu');
 		
 	def call(self,state,action,bnorm):
@@ -544,6 +548,8 @@ class Critic_CTBG(keras.Model):
 		x = self.bna(x,training=bnorm)
 		x = self.l2(x);
 		x = self.bnb(x,training=bnorm)
+		#x = self.l3(x)
+		#x = self.bnc(x,training=bnorm)
 		val = self.lout(x);
 		#val = tf.clip_by_value(x,0,100)
 		return val
@@ -806,7 +812,7 @@ class Agent_MB:
 		thresh_1 = self.hparams[GOAL_DIST_1]
 		dist_scale = self.hparams[DIST_SCALE]
 		neg_dist_scale = self.hparams[NEG_DIST_SCALE]
-		thresh_2 = 0
+		thresh_2 = 1
 		base = self.hparams[REWARD_BASE]
 		reward = 0
 		if dist < thresh_1:
@@ -824,6 +830,7 @@ class Agent_MB:
 			reward = -np.exp((dist - thresh_1)/(neg_dist_scale))
 						
 		with self.summary_writer.as_default():
+			tf.summary.scalar('Distance to goal',dist,step=self.n_check)
 			tf.summary.scalar('Met goal count',self.met_goal_count,step=self.n_check)
 
 		if self.goal_attempt >= self.goal_thresh_2:
@@ -912,6 +919,7 @@ class Agent_3:
 		ctbg_params['STD_MC'] = self.hparams[STD_MC]
 		ctbg_params['TAU'] = self.hparams[TAU]
 		ctbg_params['NOISE_SCALE'] = self.hparams[NOISE_SCALE]
+		ctbg_params['NOISE_SCALE_2'] = self.hparams[NOISE_SCALE_2]
 		ctbg_params['NOISE_BASE'] = self.hparams[NOISE_BASE]
 		
 		self.ctbg = CTBG.CTBG(summary_writer,ctbg_params)
@@ -944,11 +952,13 @@ class Agent_3:
 		self.last_reward_avg = 0
 		
 		self.tde = 0
+		self.use_reset_noise = False
 		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
-			self.ctbg.reset_noise()
+			if self.use_reset_noise:
+				self.ctbg.reset_noise()
 			self.goal = self.pfc.act(c_arm_pos,current_color)
 			self.goal = tf.clip_by_value(self.goal,-8./9.,8./9.)
 			print(self.goal*self.pfc.pos_scale)
@@ -1054,6 +1064,7 @@ class Agent_3:
 		tde_scale = self.hparams[TDE_SCALE]
 		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
+		self.tde = min(self.tde,hparams[REWARD_BASE]) #to prevent catastrophically high TDE
 		self.ctbg.update_noise(self.tde)
 		
 		with tf.GradientTape() as tape:
@@ -1102,13 +1113,13 @@ trials = 1;
 if linux:
 	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_BASE,TDE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 else:
 	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_BASE,TDE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 

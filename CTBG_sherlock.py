@@ -557,26 +557,34 @@ class Motor_thal(layers.Layer):
 		return f
 		
 class Premotor(layers.Layer):
-	def __init__(self,units,input_dim=9,batch_norm=False):
+	def __init__(self,units,output_sz,batch_norm=False):
 		super(Premotor,self).__init__()
-		self.input_dim = input_dim
 		self.batch_norm = batch_norm
 		unit1 = units[0]
 		unit2 = units[1]
 		unit3 = units[2]
 		l1_sz = unit3
 		l2_sz = unit3
-		self.l1 = layers.Dense(l1_sz,activation='sigmoid')
+		#l3_sz = unit3
+		self.l1 = layers.Dense(l1_sz,activation='relu')
 		if batch_norm:
 			self.bna = tf.keras.layers.BatchNormalization()
-		self.l2 = layers.Dense(l2_sz,activation='sigmoid')
+			self.bnb = tf.keras.layers.BatchNormalization()
+			self.bnc = tf.keras.layers.BatchNormalization()
+		self.l2 = layers.Dense(l2_sz,activation='relu')
+		#self.l3 = layers.Dense(l3_sz,activation='relu')
+		self.lout = layers.Dense(output_sz,activation='relu');
 	
-	def call(self,inputs):
-		#takes goal (3), color(3), c_arm_pos(3) -> shape (1,9)
+	def call(self,inputs,bnorm):
 		x = self.l1(inputs)
 		if self.batch_norm:
-			x = self.bna(x,training=True)
+			x = self.bna(x,training=bnorm)
 		x = self.l2(x)
+		if self.batch_norm:
+			x = self.bnb(x,training=bnorm)
+		x = self.lout(x)
+		if self.batch_norm:
+			x = self.bnc(x,training=bnorm)
 		return x
 		
 class Motor_cortex(layers.Layer):
@@ -588,22 +596,27 @@ class Motor_cortex(layers.Layer):
 		unit3 = units[2]
 		l1_sz = unit3
 		l2_sz = unit3
+		l3_sz = unit3
 		self.l1 = layers.Dense(l1_sz,activation='relu')
 		if batch_norm:
 			self.bna = tf.keras.layers.BatchNormalization()
 			self.bnb = tf.keras.layers.BatchNormalization()
+			#self.bnc = tf.keras.layers.BatchNormalization()
 		self.l2 = layers.Dense(l2_sz,activation='relu')
+		#self.l3 = layers.Dense(l3_sz,activation='relu')
 		self.lout = layers.Dense(action_sz,activation='relu');
 		#self(tf.convert_to_tensor([np.zeros(state_sz,dtype='float32')]));
 	
 	def call(self,inputs,bnorm):
-		#takes input from mthal. In future, should get some input from premotor directly as well
-		x = self.l1(inputs);
+		x = self.l1(inputs)
 		if self.batch_norm:
 			x = self.bna(x,training=bnorm)
-		x = self.l2(x);
+		x = self.l2(x)
 		if self.batch_norm:
 			x = self.bnb(x,training=bnorm)
+		#x = self.l3(x)
+		#if self.batch_norm:
+			#x = self.bnc(x,training=bnorm)
 		action = self.lout(x)
 		return action
 		
@@ -616,6 +629,7 @@ class CTBG(keras.Model):
 		units = [hparams['UNIT_1'],hparams['UNIT_2'],hparams['UNIT_3']]
 		self.units = units
 		
+		self.prem_output_sz = 9
 		self.use_all = False
 		self.use_batch_norm = True
 		
@@ -628,6 +642,7 @@ class CTBG(keras.Model):
 			self.premotor = Premotor(units)
 			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
 		else:
+			self.premotor = Premotor(units,self.prem_output_sz,batch_norm=self.use_batch_norm)
 			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
 		
 		self.std_all = 0.1
@@ -636,6 +651,7 @@ class CTBG(keras.Model):
 		self.std_mc_init = self.std_mc
 		self.tau = hparams['TAU']
 		self.noise_scale = hparams['NOISE_SCALE']
+		self.noise_scale_2 = hparams['NOISE_SCALE_2']
 		self.noise_base = hparams['NOISE_BASE']
 		
 		# self.bna = tf.keras.layers.BatchNormalization()
@@ -652,7 +668,11 @@ class CTBG(keras.Model):
 		self.inhibitory = -1 #set to 1 if you don't want to use it
 	
 	def update_noise(self,tde):
-		self.std_mc = max(min(self.std_mc - self.noise_scale*(tde - self.tau),self.std_mc_init),self.noise_base)
+		if self.std_mc <= self.noise_base and tde > 0:
+			self.std_mc = max(self.std_mc - self.noise_scale_2*(tde - self.tau),1.0)
+		else:
+			self.std_mc = max(min(self.std_mc - self.noise_scale*(tde - self.tau),self.std_mc_init),self.noise_base)
+
 	
 	def call(self,str_inputs,prem_inputs,loss,use_noisy_relaxation,bnorm):
 	
@@ -729,7 +749,14 @@ class CTBG(keras.Model):
 				mctx_out = self.gn_mc(mctx_out)
 			mctx_out = tf.clip_by_value(mctx_out,0,self.max_fr)
 		else:
-			mctx_out = self.mctx(prem_inputs,bnorm)
+			premotor_in = prem_inputs[:,0:8]
+			mctx_in = prem_inputs[:,8:14]
+			
+			prem_out = self.premotor(premotor_in,bnorm)
+			mctx_in = layers.concatenate([prem_out,mctx_in])
+
+			mctx_out = self.mctx(mctx_in,bnorm)
+			# mctx_out = self.mctx(prem_inputs,bnorm)
 			if use_noisy_relaxation:
 				mctx_out = self.gn_mc(mctx_out)
 			mctx_out = tf.clip_by_value(mctx_out,0,self.max_fr)
