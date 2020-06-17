@@ -963,18 +963,23 @@ class Agent_3:
 		
 		self.last_actor_loss = 0
 		self.last_reward_avg = 0
-		
+        
 		self.tde = 0
-		self.use_reset_noise = False
+		self.use_reset_noise = True
+		self.n_goal = 0
+		self.bound = 0
+		self.bound_div = 2.0
 		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
-			if self.use_reset_noise:
-				self.ctbg.reset_noise()
-			self.goal = self.pfc.act(c_arm_pos,current_color)
-			self.goal = tf.clip_by_value(self.goal,-8./9.,8./9.)
-			print(self.goal*self.pfc.pos_scale)
+                    if self.use_reset_noise and self.bound < 1.0:
+                        self.ctbg.reset_noise()
+                    self.goal = self.pfc.act(c_arm_pos,current_color)
+                    self.n_goal += 1
+                    self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
+                    self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
+                    print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
 		c_arm_pos = self.expand_vector(c_arm_pos)
@@ -1019,7 +1024,7 @@ class Agent_3:
 	def update_memory(self,c_arm_pos,current_color,reward):
 		total_reward = self.pfc.check_met_goal(self.goal,c_arm_pos)
 		valuated_reward = self.pfc.valuation(reward)
-		if self.pfc.met_goal:
+		if self.pfc.met_goal and self.bound == 1.0:
 			self.pfc.update_memory(c_arm_pos,current_color,reward)
 			total_reward += valuated_reward
 		# else:
@@ -1038,8 +1043,8 @@ class Agent_3:
 		self.memory.store(self.last_state[0],self.last_state[1],new_str,new_prem,self.last_action_tensor,total_reward); #<s_str, s_prem, s'_str, s'_prem, a, r> -> store
 	
 	def train(self):
-		if self.pfc.met_goal:
-			self.pfc.train()
+		if self.pfc.met_goal and self.bound == 1.0:
+                        self.pfc.train()
 		#
 		huber = tf.keras.losses.Huber(delta=self.max_grad);
 		pre_str_mem = tf.convert_to_tensor(np.vstack(self.memory.prestrstates),dtype=tf.float32)
