@@ -1091,9 +1091,10 @@ class Agent_3:
 			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False,bnorm=True);
 			#print(self.critic(pre_str_mem,next_actions))
 			#gradient ascent, using the critic that was just updated
-			self.actor_loss = -min(tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False)),self.max_critic_loss)
+			self.actor_loss = -tf.clip_by_value(tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False)),0,self.max_critic_loss)
 		
-		self.last_actor_loss = self.actor_loss.numpy()
+		#print(self.actor_loss)
+		self.last_actor_loss = self.actor_loss
 		#print(self.ctbg.trainable_variables)
 		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables)
 		#print(tf.math.reduce_max(self.actor_grad[1]))
