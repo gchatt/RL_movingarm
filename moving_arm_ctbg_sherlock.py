@@ -970,6 +970,8 @@ class Agent_3:
 		self.bound = 0
 		self.bound_div = 2.0
 		
+		self.max_critic_loss = 500
+		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
@@ -1074,7 +1076,7 @@ class Agent_3:
 			#print(tf.math.reduce_max(target_Q))
 			#print(tf.math.reduce_max(td_errors))
 			#td_errors = (target_Q - current_Q)**2
-			self.critic_loss = tf.reduce_mean(td_errors);	
+			self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
 		critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
 		#print('critic grad')
 		#print(critic_grad)
@@ -1082,14 +1084,14 @@ class Agent_3:
 		tde_scale = self.hparams[TDE_SCALE]
 		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
-		self.tde = min(self.tde,hparams[REWARD_BASE]) #to prevent catastrophically high TDE
+		self.tde = min(self.tde,self.max_critic_loss) #to prevent catastrophically high TDE
 		self.ctbg.update_noise(self.tde)
 		
 		with tf.GradientTape() as tape:
 			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False,bnorm=True);
 			#print(self.critic(pre_str_mem,next_actions))
 			#gradient ascent, using the critic that was just updated
-			self.actor_loss = -tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False))
+			self.actor_loss = -min(tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False)),self.max_critic_loss)
 		
 		self.last_actor_loss = self.actor_loss.numpy()
 		#print(self.ctbg.trainable_variables)
