@@ -550,13 +550,13 @@ class Critic_CTBG(keras.Model):
         self.lout = layers.Dense(1,activation='relu');
 
     def call(self,state,action,bnorm):
-        y = self.l1i(state)
+        y = self.l1i(state[:,0:8])
         y = self.bnai(y,training=bnorm)
         y = self.l2i(y)
         y = self.bnbi(y,training=bnorm)
         y = self.l3i(y)
         y = self.bnci(y,training=bnorm)
-        inputs = layers.concatenate([y,action]);
+        inputs = layers.concatenate([y,state[:,8:14],action]);
         x = self.l1(inputs);
         x = self.bna(x,training=bnorm)
         x = self.l2(x);
