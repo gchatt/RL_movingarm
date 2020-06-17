@@ -563,8 +563,8 @@ class Premotor(layers.Layer):
 		unit1 = units[0]
 		unit2 = units[1]
 		unit3 = units[2]
-		l1_sz = unit3
-		l2_sz = unit3
+		l1_sz = unit2
+		l2_sz = unit2
 		#l3_sz = unit3
 		self.l1 = layers.Dense(l1_sz,activation='relu')
 		if batch_norm:

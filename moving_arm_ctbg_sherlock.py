@@ -18,7 +18,7 @@ verbose = False
 GUI = False
 if GUI:
 	import pygame
-linux = False
+linux = True
 manual_exit = True
 if linux:
 	manual_exit = False
@@ -76,11 +76,11 @@ UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
 manual_hparams.append(UNIT_1)
 
 #other nuclei division size (multiply by 3 for total size)
-UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
+UNIT_2 = hp.HParam('unit_2',hp.Discrete([64]))
 manual_hparams.append(UNIT_2)
 
 #premotor and motor cortex layer size
-UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
+UNIT_3 = hp.HParam('unit_3',hp.Discrete([5000]))
 manual_hparams.append(UNIT_3)
 
 #critic units
@@ -99,7 +99,7 @@ NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.01]))
 manual_hparams.append(NOISE_SCALE)
 NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.009]))
 manual_hparams.append(NOISE_SCALE_2)
-NOISE_BASE = hp.HParam('noise_base',hp.Discrete([2.0]))
+NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
 
 #TDE scale. Scales the target_Q vs. current_Q. TDE = target_Q * tde_scale - current_Q
@@ -109,8 +109,9 @@ manual_hparams.append(TDE_SCALE)
 
 #Relevant for when the model free agent is trying to reach the MB agents goal. What success rate defines 'meeting the goal' and allows the MB agent to move on?
 #100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
-#This 50% ratio appears to be doable and working; you could argue it's too low but I think 50% is a good mark
-GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([20]))
+#Keeping the goal needed somewhat low; 10 seems to be sufficient for showing that system has learned
+#Currently, 'met goal' means you are either in the bin or 1 unit away
+GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([10]))
 GOALS_MET_THRESH_2 = hp.HParam('goals_met_thresh_2',hp.Discrete([200]))
 manual_hparams.append(GOALS_MET_THRESH_1)
 manual_hparams.append(GOALS_MET_THRESH_2)
@@ -186,7 +187,7 @@ class moving_arm_env(threading.Thread):
 		current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
 		param_str = str({h.name: hparams[h] for h in hparams})
 		if linux:
-			log_dir = os.getcwd()+'/logs/' + current_time
+			log_dir = '/scratch/users/gchatt/logs/' + current_time
 			self.summary_writer = tf.summary.create_file_writer(log_dir)
 			
 			with open(log_dir+'/header.txt','w') as header_file:
@@ -536,10 +537,10 @@ class Critic_CTBG(keras.Model):
 		super(Critic_CTBG,self).__init__();
 		self.l1 = layers.Dense(hparams[UNIT_3],activation='relu');
 		self.l2 = layers.Dense(hparams[UNIT_3],activation='relu');
-		self.l3 = layers.Dense(hparams[UNIT_3],activation='relu');
+		#self.l3 = layers.Dense(hparams[UNIT_3],activation='relu');
 		self.bna = tf.keras.layers.BatchNormalization()
 		self.bnb = tf.keras.layers.BatchNormalization()
-		self.bnc = tf.keras.layers.BatchNormalization()
+		#self.bnc = tf.keras.layers.BatchNormalization()
 		self.lout = layers.Dense(1,activation='relu');
 		
 	def call(self,state,action,bnorm):
@@ -1111,7 +1112,7 @@ mv_envs = [];
 n = 0;
 trials = 1;
 if linux:
-	with tf.summary.create_file_writer(os.getcwd()+'/logs').as_default():
+	with tf.summary.create_file_writer('/scratch/users/gchatt/logs').as_default():
 		hp.hparams_config(
 			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
