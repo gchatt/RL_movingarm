@@ -533,27 +533,39 @@ class Actor(keras.Model):
 		# return q_val
 		
 class Critic_CTBG(keras.Model):
-	def __init__(self,hparams):
-		super(Critic_CTBG,self).__init__();
-		self.l1 = layers.Dense(hparams[UNIT_3],activation='relu');
-		self.l2 = layers.Dense(hparams[UNIT_3],activation='relu');
-		#self.l3 = layers.Dense(hparams[UNIT_3],activation='relu');
-		self.bna = tf.keras.layers.BatchNormalization()
-		self.bnb = tf.keras.layers.BatchNormalization()
-		#self.bnc = tf.keras.layers.BatchNormalization()
-		self.lout = layers.Dense(1,activation='relu');
-		
-	def call(self,state,action,bnorm):
-		inputs = layers.concatenate([state,action]);
-		x = self.l1(inputs);
-		x = self.bna(x,training=bnorm)
-		x = self.l2(x);
-		x = self.bnb(x,training=bnorm)
-		#x = self.l3(x)
-		#x = self.bnc(x,training=bnorm)
-		val = self.lout(x);
-		#val = tf.clip_by_value(x,0,100)
-		return val
+    def __init__(self,hparams):
+        super(Critic_CTBG,self).__init__()
+        self.l1i = layers.Dense(hparams[UNIT_2],activation='relu')
+        self.l2i = layers.Dense(hparams[UNIT_2],activation='relu')
+        self.l3i = layers.Dense(9,activation='relu')
+        self.l1 = layers.Dense(hparams[UNIT_3],activation='relu');
+        self.l2 = layers.Dense(hparams[UNIT_3],activation='relu');
+        #self.l3 = layers.Dense(hparams[UNIT_3],activation='relu');
+        self.bna = tf.keras.layers.BatchNormalization()
+        self.bnb = tf.keras.layers.BatchNormalization()
+        self.bnai = tf.keras.layers.BatchNormalization()
+        self.bnbi = tf.keras.layers.BatchNormalization()
+        self.bnci = tf.keras.layers.BatchNormalization()
+        #self.bnc = tf.keras.layers.BatchNormalization()
+        self.lout = layers.Dense(1,activation='relu');
+
+    def call(self,state,action,bnorm):
+        y = self.l1i(state)
+        y = self.bnai(y,training=bnorm)
+        y = self.l2i(y)
+        y = self.bnbi(y,training=bnorm)
+        y = self.l3i(y)
+        y = self.bnci(y,training=bnorm)
+        inputs = layers.concatenate([y,action]);
+        x = self.l1(inputs);
+        x = self.bna(x,training=bnorm)
+        x = self.l2(x);
+        x = self.bnb(x,training=bnorm)
+        #x = self.l3(x)
+        #x = self.bnc(x,training=bnorm)
+        val = self.lout(x);
+        #val = tf.clip_by_value(x,0,100)
+        return val
 
 class SG(keras.Model):
 	def __init__(self,goal_sz):
