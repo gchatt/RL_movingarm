@@ -61,7 +61,7 @@ LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.001]))
 manual_hparams.append(LR_CTBG)
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
-LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.001]))
+LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.0005]))
 #LR_CRITIC_DRAW = 1
 manual_hparams.append(LR_CRITIC)
 #Gamma = discount paramater when calculating Q value in critic network
@@ -76,7 +76,7 @@ UNIT_1 = hp.HParam('unit_1',hp.Discrete([100]))
 manual_hparams.append(UNIT_1)
 
 #other nuclei division size (multiply by 3 for total size)
-UNIT_2 = hp.HParam('unit_2',hp.Discrete([64]))
+UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 manual_hparams.append(UNIT_2)
 
 #premotor and motor cortex layer size
@@ -95,9 +95,9 @@ TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.01]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.009]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.009]))
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.008]))
 manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
@@ -111,7 +111,7 @@ manual_hparams.append(TDE_SCALE)
 #100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
 #Keeping the goal needed somewhat low; 10 seems to be sufficient for showing that system has learned
 #Currently, 'met goal' means you are either in the bin or 1 unit away
-GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([10]))
+GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([15]))
 GOALS_MET_THRESH_2 = hp.HParam('goals_met_thresh_2',hp.Discrete([200]))
 manual_hparams.append(GOALS_MET_THRESH_1)
 manual_hparams.append(GOALS_MET_THRESH_2)
@@ -123,7 +123,7 @@ manual_hparams.append(GOALS_MET_THRESH_2)
 #using an L1 distance
 #reward function -> reward = reward_base * exp(-L1_dist / dist_scale)
 #-np.exp((dist - thresh_1)/neg_dist_scale) to give negative reward
-GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([15]))
+GOAL_DIST_1 = hp.HParam('goal_dist_1',hp.Discrete([20]))
 DIST_SCALE = hp.HParam('dist_scale',hp.Discrete([5]))
 NEG_DIST_SCALE = hp.HParam('neg_dist_scale',hp.Discrete([100]))
 REWARD_BASE = hp.HParam('reward_base',hp.Discrete([100]))
@@ -536,7 +536,7 @@ class Critic_CTBG(keras.Model):
     def __init__(self,hparams):
         super(Critic_CTBG,self).__init__()
         self.l1i = layers.Dense(hparams[UNIT_2],activation='relu')
-        self.l2i = layers.Dense(hparams[UNIT_2],activation='relu')
+        #self.l2i = layers.Dense(hparams[UNIT_2],activation='relu')
         self.l3i = layers.Dense(9,activation='relu')
         self.l1 = layers.Dense(hparams[UNIT_3],activation='relu');
         self.l2 = layers.Dense(hparams[UNIT_3],activation='relu');
@@ -544,7 +544,7 @@ class Critic_CTBG(keras.Model):
         self.bna = tf.keras.layers.BatchNormalization()
         self.bnb = tf.keras.layers.BatchNormalization()
         self.bnai = tf.keras.layers.BatchNormalization()
-        self.bnbi = tf.keras.layers.BatchNormalization()
+        #self.bnbi = tf.keras.layers.BatchNormalization()
         self.bnci = tf.keras.layers.BatchNormalization()
         #self.bnc = tf.keras.layers.BatchNormalization()
         self.lout = layers.Dense(1,activation='relu');
@@ -552,11 +552,11 @@ class Critic_CTBG(keras.Model):
     def call(self,state,action,bnorm):
         y = self.l1i(state[:,0:8])
         y = self.bnai(y,training=bnorm)
-        y = self.l2i(y)
-        y = self.bnbi(y,training=bnorm)
+        #y = self.l2i(y)
+        #y = self.bnbi(y,training=bnorm)
         y = self.l3i(y)
         y = self.bnci(y,training=bnorm)
-        inputs = layers.concatenate([y,state[:,8:14],action]);
+        inputs = layers.concatenate([y,state[:,8:14],action])
         x = self.l1(inputs);
         x = self.bna(x,training=bnorm)
         x = self.l2(x);
@@ -966,11 +966,11 @@ class Agent_3:
         
 		self.tde = 0
 		self.use_reset_noise = True
-		self.n_goal = 0
+		self.n_goal = 1
 		self.bound = 0
 		self.bound_div = 2.0
 		
-		self.max_critic_loss = 500
+		self.max_critic_loss = 10000
 		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
@@ -1075,8 +1075,10 @@ class Agent_3:
 			#print(tf.math.reduce_max(current_Q))
 			#print(tf.math.reduce_max(target_Q))
 			#print(tf.math.reduce_max(td_errors))
-			#td_errors = (target_Q - current_Q)**2
-			self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
+			#td_errors = (target_Q - current_Q)**2	
+			self.critic_loss = tf.reduce_mean(td_errors)
+		
+		#self.critic_loss = tf.clip_by_value(self.critic_loss,0,self.max_critic_loss)
 		critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
 		#print('critic grad')
 		#print(critic_grad)
@@ -1084,16 +1086,17 @@ class Agent_3:
 		tde_scale = self.hparams[TDE_SCALE]
 		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
-		self.tde = min(self.tde,self.max_critic_loss) #to prevent catastrophically high TDE
+		self.tde = min(self.tde,100) #to prevent catastrophically high TDE
 		self.ctbg.update_noise(self.tde)
 		
 		with tf.GradientTape() as tape:
 			next_actions = self.ctbg(pre_str_mem,pre_prem_mem,0,False,bnorm=True);
 			#print(self.critic(pre_str_mem,next_actions))
 			#gradient ascent, using the critic that was just updated
-			self.actor_loss = -tf.clip_by_value(tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False)),0,self.max_critic_loss)
+			#self.actor_loss = -tf.clip_by_value(tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False)),0,self.max_critic_loss)
+			self.actor_loss = -tf.reduce_mean(self.critic(pre_prem_mem,next_actions,bnorm=False))
 		
-		#print(self.actor_loss)
+		#self.actor_loss = tf.clip_by_value(self.actor_loss,-self.max_critic_loss,self.max_critic_loss)
 		self.last_actor_loss = self.actor_loss
 		#print(self.ctbg.trainable_variables)
 		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables)
