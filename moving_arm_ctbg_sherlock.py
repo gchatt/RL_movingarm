@@ -56,12 +56,12 @@ VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
 manual_hparams.append(VAL_SCALE)
 
 #Learning rate for CTBG object in main agent
-LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.001]))
+LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.0001]))
 #LR_CTBG_DRAW = 1
 manual_hparams.append(LR_CTBG)
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
-LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.0005]))
+LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.0001]))
 #LR_CRITIC_DRAW = 1
 manual_hparams.append(LR_CRITIC)
 #Gamma = discount paramater when calculating Q value in critic network
@@ -184,16 +184,16 @@ class moving_arm_env(threading.Thread):
 		#must be an integer
 		self.edge = 10
 		
-		current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
+		self.current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
 		param_str = str({h.name: hparams[h] for h in hparams})
 		if linux:
-			log_dir = '/scratch/users/gchatt/logs/' + current_time
+			log_dir = '/scratch/users/gchatt/logs/' + self.current_time
 			self.summary_writer = tf.summary.create_file_writer(log_dir)
 			
 			with open(log_dir+'/header.txt','w') as header_file:
 				header_file.write(param_str)
 		else:
-			log_dir = os.getcwd()+'\\logs\\' + current_time
+			log_dir = os.getcwd()+'\\logs\\' + self.current_time
 			self.summary_writer = tf.summary.create_file_writer(log_dir)
 			
 			with open(log_dir+'\\header.txt','w') as header_file:
@@ -249,6 +249,8 @@ class moving_arm_env(threading.Thread):
 		
 		#agent = Agent_MB(self.min_arm_position,self.max_arm_position,self.num_arms,self.num_reward_objects)
 		agent = Agent_3(self.min_arm_position,self.max_arm_position,self.num_arms,self.num_reward_objects,self.summary_writer,self.hparams)
+		#set it's label (current time)
+		agent.current_time = self.current_time
 		
 		#255.0 for now; this means full normalization of the color term
 		cdiv = float(self.hparams[CDIV])
@@ -972,6 +974,8 @@ class Agent_3:
 		
 		self.max_critic_loss = 10000
 		
+		self.current_time = ''
+		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
@@ -1105,7 +1109,17 @@ class Agent_3:
 		self.log(2)
 		self.n_train += 1
 		self.memory.clear()
-	
+		
+		if linux:
+			self.ctbg.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/ctbg/ctbg_checkpoint')
+			self.critic.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/critic/critic_checkpoint')
+			with open('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/log.txt','w') as logfile:
+				logfile.write('ngoal='+str(self.n_goal))
+		else:
+			self.ctbg.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\ctbg\\ctbg_checkpoint')
+			self.critic.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\critic\\critic_checkpoint')
+			with open(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\log.txt','w') as logfile:
+				logfile.write('n_goal='+str(self.n_goal))
 	def log(self,type):
 		if type == 2:
 			self.ctbg.log(self.n_train)
