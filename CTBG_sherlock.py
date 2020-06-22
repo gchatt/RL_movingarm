@@ -555,7 +555,170 @@ class Motor_thal(layers.Layer):
 		p = tf.transpose(tf.linalg.matmul(self.s,tf.transpose(inputs)),perm=[2,0,1]) #mask the inputs
 		f = tf.linalg.diag_part(tf.linalg.matmul(p,self.w)) + self.b
 		return f
-		
+
+class custom_PM_MC_1(layers.Layer):
+	#9 (goal,color), 1000
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_1,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+class custom_PM_MC_2(layers.Layer):
+	#1000, 1000
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_2,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+class custom_PM_MC_3(layers.Layer):
+	#1000, 9 (this is like the goal directed mthal I guess)
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_3,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+class custom_PM_MC_4(layers.Layer):
+	#15 (layer 3 output + c_arm_pos), 1000
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_4,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+class custom_PM_MC_5(layers.Layer):
+	#1000, 1000
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_5,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+class custom_PM_MC_6(layers.Layer):
+	#1000, 6 (output)
+	def __init__(self,input_dim,units,decay_init):
+		super(custom_PM_MC_6,self).__init__()
+		self.input_dim = input_dim
+		self.units = units
+		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
+		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
+		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
+		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
+		self.decay_rates = self.add_weight(shape=(self.input_dim,self.units),initializer=decay_rate_init,trainable=False)
+		self.initial_weights = copy.deepcopy(self.w)
+		#print(self.initial_weights)
+		self.mask = np.ones_like(self.w.numpy())
+		self.fixed_values = np.zeros_like(self.w.numpy())
+
+	def call(self,inputs):
+		masked_weights = tf.multiply(self.mask,self.w)
+		w = masked_weights + self.fixed_values
+		out = tf.linalg.matmul(inputs,w) + self.b
+		return out
+	
+	def decay(self):
+		#vector in direction pointint from fixed_weights to initial_weights; take an uneven step in this direction based on decay rates
+		self.w = self.w - tf.multiply((self.w - self.initial_weights),self.decay_rates)
+
+
 class Premotor(layers.Layer):
 	def __init__(self,units,output_sz,batch_norm=False):
 		super(Premotor,self).__init__()
@@ -628,10 +791,13 @@ class CTBG(keras.Model):
 
 		units = [hparams['UNIT_1'],hparams['UNIT_2'],hparams['UNIT_3']]
 		self.units = units
+		self.unit3 = units[2]
 		
 		self.prem_output_sz = 9
 		self.use_all = False
 		self.use_batch_norm = True
+		self.use_custom_PMMC = True
+		decay_init = [0.00001,0.00002]
 		
 		if self.use_all:
 			self.dorsal_striatum = Striatum(units)
@@ -641,6 +807,14 @@ class CTBG(keras.Model):
 			self.mthal = Motor_thal(units)
 			self.premotor = Premotor(units)
 			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
+		elif self.use_custom_PMMC:
+			self.pmmc = []
+			self.pmmc.append(custom_PM_MC_1(9,self.unit3,decay_init))
+			self.pmmc.append(custom_PM_MC_2(self.unit3,self.unit3,decay_init))
+			self.pmmc.append(custom_PM_MC_3(self.unit3,9,decay_init))
+			self.pmmc.append(custom_PM_MC_4(15,self.unit3,decay_init))
+			self.pmmc.append(custom_PM_MC_5(self.unit3,self.unit3,decay_init))
+			self.pmmc.append(custom_PM_MC_6(self.unit3,6,decay_init))
 		else:
 			self.premotor = Premotor(units,self.prem_output_sz,batch_norm=self.use_batch_norm)
 			self.mctx = Motor_cortex(units,batch_norm=self.use_batch_norm)
@@ -654,12 +828,12 @@ class CTBG(keras.Model):
 		self.noise_scale_2 = hparams['NOISE_SCALE_2']
 		self.noise_base = hparams['NOISE_BASE']
 		
-		# self.bna = tf.keras.layers.BatchNormalization()
-		# self.bnb = tf.keras.layers.BatchNormalization()
-		# self.bnc = tf.keras.layers.BatchNormalization()
-		# self.bnd = tf.keras.layers.BatchNormalization()
-		# self.bne = tf.keras.layers.BatchNormalization()
-		# self.bnf = tf.keras.layers.BatchNormalization()
+		self.bna = tf.keras.layers.BatchNormalization()
+		self.bnb = tf.keras.layers.BatchNormalization()
+		self.bnc = tf.keras.layers.BatchNormalization()
+		self.bnd = tf.keras.layers.BatchNormalization()
+		self.bne = tf.keras.layers.BatchNormalization()
+		self.bnf = tf.keras.layers.BatchNormalization()
 		
 		self.summary_writer = summary_writer
 		self.n_step = 0
@@ -748,10 +922,47 @@ class CTBG(keras.Model):
 			if use_noisy_relaxation:
 				mctx_out = self.gn_mc(mctx_out)
 			mctx_out = tf.clip_by_value(mctx_out,0,self.max_fr)
-		else:
-			premotor_in = prem_inputs[:,0:8]
-			mctx_in = prem_inputs[:,8:14]
+		elif self.use_custom_PMMC:
+			premotor_in = prem_inputs[:,0:9]
+			mctx_in = prem_inputs[:,9:15]
 			
+			out = self.pmmc[0].call(premotor_in)
+			out = tf.nn.relu(out)
+			out = tf.clip_by_value(out,0,self.max_fr)
+			out = self.bna(out,training=bnorm)
+			
+			out = self.pmmc[1].call(out)
+			out = tf.nn.relu(out)
+			out = tf.clip_by_value(out,0,self.max_fr)
+			out = self.bnb(out,training=bnorm)
+			
+			out = self.pmmc[2].call(out)
+			out = tf.nn.relu(out)
+			out = tf.clip_by_value(out,0,self.max_fr)
+			prem_out = self.bnc(out,training=bnorm)
+			
+			mctx_in = layers.concatenate([prem_out,mctx_in])
+			
+			out = self.pmmc[3].call(mctx_in)
+			out = tf.nn.relu(out)
+			out = tf.clip_by_value(out,0,self.max_fr)
+			out = self.bnd(out,training=bnorm)
+			
+			out = self.pmmc[4].call(out)
+			out = tf.nn.relu(out)
+			out = tf.clip_by_value(out,0,self.max_fr)
+			out = self.bne(out,training=bnorm)
+			
+			out = self.pmmc[5].call(out)
+			out = tf.nn.relu(out)
+			if use_noisy_relaxation:
+				out = self.gn_mc(out)
+			mctx_out = tf.clip_by_value(out,0,self.max_fr)
+			
+		
+		else:
+			premotor_in = prem_inputs[:,0:9]
+			mctx_in = prem_inputs[:,9:15]
 			prem_out = self.premotor(premotor_in,bnorm)
 			mctx_in = layers.concatenate([prem_out,mctx_in])
 
@@ -814,8 +1025,46 @@ class CTBG(keras.Model):
 				tf.summary.histogram('Motor Thalamus Biases',self.mthal.trainable_weights[1],step=n_train)
 				tf.summary.histogram('Premotor Cortex Biases',self.premotor.trainable_weights[1],step=n_train)
 				tf.summary.histogram('Motor Cortex Biases',self.mctx.trainable_weights[1],step=n_train)
+		elif self.use_custom_PMMC:
+			with self.summary_writer.as_default():
+				tf.summary.histogram('pmmc1 weights',self.pmmc[0].trainable_weights[0],step=n_train)
+				tf.summary.histogram('pmmc2 weights',self.pmmc[1].trainable_weights[0],step=n_train)
+				tf.summary.histogram('pmmc3 weights',self.pmmc[2].trainable_weights[0],step=n_train)
+				tf.summary.histogram('pmmc4 weights',self.pmmc[3].trainable_weights[0],step=n_train)
+				tf.summary.histogram('pmmc5 weights',self.pmmc[4].trainable_weights[0],step=n_train)
+				tf.summary.histogram('pmmc6 weights',self.pmmc[5].trainable_weights[0],step=n_train)
+				tf.summary.scalar('Noise',self.std_mc,step=n_train)
 		else:
 			with self.summary_writer.as_default():
 				tf.summary.histogram('Motor Cortex Weights',self.mctx.trainable_weights[0],step=n_train)
 				tf.summary.histogram('Motor Cortex Biases',self.mctx.trainable_weights[1],step=n_train)
 				tf.summary.scalar('Noise',self.std_mc,step=n_train)
+	
+	def decay(self):
+		for i in range(len(self.pmmc)):
+			self.pmmc[i].decay()
+		
+	def fix_weights(self):
+		gv = []
+		#get the distance vectors for each layer
+		for i in range(len(self.pmmc)):
+			gv.append(np.absolute((self.pmmc[i].w - self.pmmc[i].initial_weights).numpy()))
+		choice = random.randint(len(self.pmmc))
+		gv_choice = gv[choice]
+		max_ind = np.unravel_index(np.argmax(gv_choice,axis=None),gv_choice.shape)
+		#print(gv_choice.shape)
+		#print(max_ind)
+		# max_ind is a tuple. Can use [] to query; can also go in gv[max_ind] like this to get the max value
+		already_fixed = (self.pmmc[choice].mask[max_ind] == 0) #Boolean. Is the mask already 0?
+		while already_fixed:
+			gv_choice[max_ind] = 0 #set the gv value to 0 so it is not picked again
+			choice = random.randint(len(self.pmmc))
+			gv_choice = gv[choice]
+			max_ind = np.unravel_index(np.argmax(gv_choice,axis=None),gv_choice.shape)
+			already_fixed = (self.pmmc[choice].mask[max_ind] == 0)
+
+		# set mask to 0 (initialized as ones)
+		self.pmmc[choice].mask[max_ind] = 0
+		# set the fixed value to the current weight
+		self.pmmc[choice].fixed_values[max_ind] = self.pmmc[choice].w[max_ind]
+

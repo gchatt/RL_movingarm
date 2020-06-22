@@ -80,7 +80,7 @@ UNIT_2 = hp.HParam('unit_2',hp.Discrete([100]))
 manual_hparams.append(UNIT_2)
 
 #premotor and motor cortex layer size
-UNIT_3 = hp.HParam('unit_3',hp.Discrete([5000]))
+UNIT_3 = hp.HParam('unit_3',hp.Discrete([1000]))
 manual_hparams.append(UNIT_3)
 
 #critic units
@@ -95,9 +95,9 @@ TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.009]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.008]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.008]))
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.007]))
 manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
@@ -552,13 +552,13 @@ class Critic_CTBG(keras.Model):
         self.lout = layers.Dense(1,activation='relu');
 
     def call(self,state,action,bnorm):
-        y = self.l1i(state[:,0:8])
+        y = self.l1i(state[:,0:9])
         y = self.bnai(y,training=bnorm)
         #y = self.l2i(y)
         #y = self.bnbi(y,training=bnorm)
         y = self.l3i(y)
         y = self.bnci(y,training=bnorm)
-        inputs = layers.concatenate([y,state[:,8:14],action])
+        inputs = layers.concatenate([y,state[:,9:15],action])
         x = self.l1(inputs);
         x = self.bna(x,training=bnorm)
         x = self.l2(x);
@@ -970,22 +970,26 @@ class Agent_3:
 		self.use_reset_noise = True
 		self.n_goal = 1
 		self.bound = 0
-		self.bound_div = 2.0
+		self.bound_div = 1.0
 		
 		self.max_critic_loss = 10000
 		
 		self.current_time = ''
 		
+		self.use_fix_weights = True	
+		
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
-                    if self.use_reset_noise and self.bound < 1.0:
-                        self.ctbg.reset_noise()
-                    self.goal = self.pfc.act(c_arm_pos,current_color)
-                    self.n_goal += 1
-                    self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
-                    self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
-                    print(self.goal*self.pfc.pos_scale)
+			if self.use_reset_noise and self.bound < 1.0:
+				self.ctbg.reset_noise()
+			if self.n_step > 0 and self.use_fix_weights:
+				self.ctbg.fix_weights()
+			self.goal = self.pfc.act(c_arm_pos,current_color)
+			self.n_goal += 1
+			self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
+			self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
+			print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
 		c_arm_pos = self.expand_vector(c_arm_pos)
@@ -1110,16 +1114,23 @@ class Agent_3:
 		self.n_train += 1
 		self.memory.clear()
 		
-		if linux:
-			self.ctbg.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/ctbg/ctbg_checkpoint')
-			self.critic.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/critic/critic_checkpoint')
-			with open('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/log.txt','w') as logfile:
-				logfile.write('ngoal='+str(self.n_goal))
-		else:
-			self.ctbg.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\ctbg\\ctbg_checkpoint')
-			self.critic.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\critic\\critic_checkpoint')
-			with open(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\log.txt','w') as logfile:
-				logfile.write('n_goal='+str(self.n_goal))
+		# if linux:
+			# self.ctbg.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/ctbg/ctbg_checkpoint')
+			# self.critic.save_weights('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/critic/critic_checkpoint')
+			# with open('/scratch/users/gchatt/checkpoints/checkpoint-'+self.current_time+'/log.txt','w') as logfile:
+				# logfile.write('ngoal='+str(self.n_goal))
+		# else:
+			# self.ctbg.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\ctbg\\ctbg_checkpoint')
+			# self.critic.save_weights(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\critic\\critic_checkpoint')
+			# with open(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\log.txt','w') as logfile:
+				# logfile.write('n_goal='+str(self.n_goal))
+			
+		if self.use_fix_weights:
+			#self.ctbg.fix_weights()
+			self.ctbg.decay()
+		
+		
+		
 	def log(self,type):
 		if type == 2:
 			self.ctbg.log(self.n_train)
