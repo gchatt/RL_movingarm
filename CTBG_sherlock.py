@@ -562,8 +562,8 @@ class custom_PM_MC_1(layers.Layer):
 		super(custom_PM_MC_1,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -589,8 +589,8 @@ class custom_PM_MC_2(layers.Layer):
 		super(custom_PM_MC_2,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -616,8 +616,8 @@ class custom_PM_MC_3(layers.Layer):
 		super(custom_PM_MC_3,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -643,8 +643,8 @@ class custom_PM_MC_4(layers.Layer):
 		super(custom_PM_MC_4,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -670,8 +670,8 @@ class custom_PM_MC_5(layers.Layer):
 		super(custom_PM_MC_5,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -697,8 +697,8 @@ class custom_PM_MC_6(layers.Layer):
 		super(custom_PM_MC_6,self).__init__()
 		self.input_dim = input_dim
 		self.units = units
-		w_init = tf.random_uniform_initializer(minval=0., maxval=0.01)
-		b_init = tf.random_uniform_initializer(minval=0., maxval=0.001)
+		w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
+		b_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
 		decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
 		self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=w_init,trainable=True)
 		self.b = self.add_weight(shape=(self.units,), initializer=b_init, trainable=True)
@@ -928,29 +928,29 @@ class CTBG(keras.Model):
 			
 			out = self.pmmc[0].call(premotor_in)
 			out = tf.nn.relu(out)
-			out = tf.clip_by_value(out,0,self.max_fr)
+			#out = tf.clip_by_value(out,0,self.max_fr)
 			out = self.bna(out,training=bnorm)
 			
 			out = self.pmmc[1].call(out)
 			out = tf.nn.relu(out)
-			out = tf.clip_by_value(out,0,self.max_fr)
+			#out = tf.clip_by_value(out,0,self.max_fr)
 			out = self.bnb(out,training=bnorm)
 			
 			out = self.pmmc[2].call(out)
 			out = tf.nn.relu(out)
-			out = tf.clip_by_value(out,0,self.max_fr)
+			#out = tf.clip_by_value(out,0,self.max_fr)
 			prem_out = self.bnc(out,training=bnorm)
 			
 			mctx_in = layers.concatenate([prem_out,mctx_in])
 			
 			out = self.pmmc[3].call(mctx_in)
 			out = tf.nn.relu(out)
-			out = tf.clip_by_value(out,0,self.max_fr)
+			#out = tf.clip_by_value(out,0,self.max_fr)
 			out = self.bnd(out,training=bnorm)
 			
 			out = self.pmmc[4].call(out)
 			out = tf.nn.relu(out)
-			out = tf.clip_by_value(out,0,self.max_fr)
+			#out = tf.clip_by_value(out,0,self.max_fr)
 			out = self.bne(out,training=bnorm)
 			
 			out = self.pmmc[5].call(out)

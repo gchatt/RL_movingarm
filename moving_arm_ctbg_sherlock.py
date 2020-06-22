@@ -56,12 +56,12 @@ VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
 manual_hparams.append(VAL_SCALE)
 
 #Learning rate for CTBG object in main agent
-LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.0001]))
+LR_CTBG = hp.HParam('lr_ctbg',hp.Discrete([0.001]))
 #LR_CTBG_DRAW = 1
 manual_hparams.append(LR_CTBG)
 
 #Learning rate of critic (model free) in main agent. If too high, may not be as generalizable for various positions
-LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.0001]))
+LR_CRITIC = hp.HParam('lr_critic',hp.Discrete([0.001]))
 #LR_CRITIC_DRAW = 1
 manual_hparams.append(LR_CRITIC)
 #Gamma = discount paramater when calculating Q value in critic network
@@ -95,9 +95,9 @@ TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
 STD_MC = hp.HParam('std_mc',hp.Discrete([90]))
 manual_hparams.append(STD_MC)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.008]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.009]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.007]))
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.008]))
 manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
