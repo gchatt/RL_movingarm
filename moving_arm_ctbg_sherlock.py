@@ -18,7 +18,7 @@ verbose = False
 GUI = False
 if GUI:
 	import pygame
-linux = False
+linux = True
 manual_exit = True
 if linux:
 	manual_exit = False
