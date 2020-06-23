@@ -18,7 +18,7 @@ verbose = False
 GUI = False
 if GUI:
 	import pygame
-linux = True
+linux = False
 manual_exit = True
 if linux:
 	manual_exit = False
@@ -111,7 +111,7 @@ manual_hparams.append(TDE_SCALE)
 #100 out of the last 200 moves? You have to take into account that some goals cannot be reached in one step; so there are intermediary steps; this ratio cannot be too high due to that
 #Keeping the goal needed somewhat low; 10 seems to be sufficient for showing that system has learned
 #Currently, 'met goal' means you are either in the bin or 1 unit away
-GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([15]))
+GOALS_MET_THRESH_1 = hp.HParam('goals_met_thresh_1',hp.Discrete([10]))
 GOALS_MET_THRESH_2 = hp.HParam('goals_met_thresh_2',hp.Discrete([200]))
 manual_hparams.append(GOALS_MET_THRESH_1)
 manual_hparams.append(GOALS_MET_THRESH_2)
@@ -131,6 +131,9 @@ manual_hparams.append(GOAL_DIST_1)
 manual_hparams.append(DIST_SCALE)
 manual_hparams.append(NEG_DIST_SCALE)
 manual_hparams.append(REWARD_BASE)
+
+NUM_TO_FIX = hp.HParam('num_to_fix',hp.Discrete([10,100]))
+manual_hparams.append(NUM_TO_FIX)
 
 
 
@@ -936,13 +939,14 @@ class Agent_3:
 		ctbg_params['NOISE_SCALE'] = self.hparams[NOISE_SCALE]
 		ctbg_params['NOISE_SCALE_2'] = self.hparams[NOISE_SCALE_2]
 		ctbg_params['NOISE_BASE'] = self.hparams[NOISE_BASE]
+		ctbg_params['NUM_TO_FIX'] = self.hparams[NUM_TO_FIX]
 		
 		self.ctbg = CTBG.CTBG(summary_writer,ctbg_params)
 		lr_ctbg = self.hparams[LR_CTBG]
 		#print(lr_ctbg)
 		self.ctbg_opt = tf.keras.optimizers.Adam(learning_rate=lr_ctbg)
 		
-		self.critic = Critic_CTBG(hparams)
+		self.critic = CTBG.Critic_CTBG_2(summary_writer,ctbg_params)
 		lr_critic = self.hparams[LR_CRITIC]
 		#print(lr_critic)
 		self.critic_opt = tf.keras.optimizers.Adam(learning_rate=lr_critic)
@@ -968,7 +972,7 @@ class Agent_3:
         
 		self.tde = 0
 		self.use_reset_noise = True
-		self.n_goal = 1
+		self.n_goal = 0
 		self.bound = 0
 		self.bound_div = 1.0
 		
@@ -981,13 +985,15 @@ class Agent_3:
 	def act(self,c_arm_pos,current_color):
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
+			self.n_goal += 1
+			self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
 			if self.use_reset_noise and self.bound < 1.0:
+				#self.ctbg.std_mc_init = self.hparams[STD_MC] * self.bound #doesn't work
 				self.ctbg.reset_noise()
 			if self.n_step > 0 and self.use_fix_weights:
 				self.ctbg.fix_weights()
+				self.critic.fix_weights()
 			self.goal = self.pfc.act(c_arm_pos,current_color)
-			self.n_goal += 1
-			self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
 			self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
 			print(self.goal*self.pfc.pos_scale)
 	
@@ -1054,14 +1060,16 @@ class Agent_3:
 	
 	def train(self):
 		if self.pfc.met_goal and self.bound == 1.0:
-                        self.pfc.train()
+			self.pfc.train()
 		#
+		decay_rate = -0.00001
+		#print('here')
 		huber = tf.keras.losses.Huber(delta=self.max_grad);
 		pre_str_mem = tf.convert_to_tensor(np.vstack(self.memory.prestrstates),dtype=tf.float32)
 		post_str_mem = tf.convert_to_tensor(np.vstack(self.memory.poststrstates),dtype=tf.float32)
 		pre_prem_mem = tf.convert_to_tensor(np.vstack(self.memory.prepremstates),dtype=tf.float32)
 		post_prem_mem = tf.convert_to_tensor(np.vstack(self.memory.postpremstates),dtype=tf.float32)
-		
+		#print(post_prem_mem.shape)
 		mem_actions = tf.convert_to_tensor(np.vstack(self.memory.actions),dtype=tf.float32)
 
 		mem_rewards = tf.convert_to_tensor(np.vstack(self.memory.rewards),dtype=tf.float32)
@@ -1090,7 +1098,11 @@ class Agent_3:
 		critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
 		#print('critic grad')
 		#print(critic_grad)
+		#decay_vector = np.ones_like(critic_grad) * decay_rate
+		#decay_vector = tf.convert_to_tensor(decay_vector,dtype=tf.float32)
 		self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables))
+		#self.critic_opt.apply_gradients(zip(decay_vector,self.critic.trainable_variables))
+
 		tde_scale = self.hparams[TDE_SCALE]
 		self.tde = target_Q*tde_scale - current_Q
 		self.tde = tf.reduce_mean(self.tde)
@@ -1108,8 +1120,11 @@ class Agent_3:
 		self.last_actor_loss = self.actor_loss
 		#print(self.ctbg.trainable_variables)
 		self.actor_grad = tape.gradient(self.actor_loss,self.ctbg.trainable_variables)
+		#decay_vector = np.ones_like(self.actor_grad) * decay_rate
+		#decay_vector = tf.convert_to_tensor(decay_vector,dtype=tf.float32)		
 		#print(tf.math.reduce_max(self.actor_grad[1]))
 		self.ctbg_opt.apply_gradients(zip(self.actor_grad,self.ctbg.trainable_variables))
+		#self.ctbg_opt.apply_gradients(zip(decay_vector,self.ctbg.trainable_variables))
 		self.log(2)
 		self.n_train += 1
 		self.memory.clear()
@@ -1125,9 +1140,10 @@ class Agent_3:
 			# with open(os.getcwd()+'\\checkpoints\\checkpoint-'+self.current_time+'\\log.txt','w') as logfile:
 				# logfile.write('n_goal='+str(self.n_goal))
 			
-		if self.use_fix_weights:
+		#if self.use_fix_weights:
 			#self.ctbg.fix_weights()
-			self.ctbg.decay()
+			#self.ctbg.decay()
+			#self.critic.decay()
 		
 		
 		
@@ -1162,13 +1178,13 @@ trials = 1;
 if linux:
 	with tf.summary.create_file_writer('/scratch/users/gchatt/logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE,NUM_TO_FIX],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 else:
 	with tf.summary.create_file_writer(os.getcwd()+'\\logs').as_default():
 		hp.hparams_config(
-			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE],
+			hparams=[FORCE_SCALE,UPDATE_FREQ,TOLERANCE,MAX_STEPS,MAX_SESSIONS,CDIV,VAL_SCALE,LR_CTBG,LR_CRITIC,UNIT_1,UNIT_2,UNIT_3,TAU,STD_MC,GAMMA,GOALS_MET_THRESH_1,GOALS_MET_THRESH_2,GOAL_DIST_1,DIST_SCALE,NEG_DIST_SCALE,REWARD_BASE,NOISE_SCALE,NOISE_SCALE_2,NOISE_BASE,TDE_SCALE,NUM_TO_FIX],
 			metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')],
 		)
 
