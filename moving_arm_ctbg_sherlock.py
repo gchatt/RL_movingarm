@@ -18,7 +18,7 @@ verbose = False
 GUI = False
 if GUI:
 	import pygame
-linux = True
+linux = False
 manual_exit = True
 if linux:
 	manual_exit = False
@@ -52,7 +52,7 @@ CDIV = hp.HParam('cdiv',hp.Discrete([255]))
 manual_hparams.append(CDIV)
 
 #VAL_SCALE = how high the reward is valued. scalar. High values mean higher valued reward. Idea here is that maybe this drives larger gradients?
-VAL_SCALE = hp.HParam('val_scale',hp.Discrete([1]))
+VAL_SCALE = hp.HParam('val_scale',hp.Discrete([20]))
 manual_hparams.append(VAL_SCALE)
 
 #Learning rate for CTBG object in main agent
@@ -132,7 +132,7 @@ manual_hparams.append(DIST_SCALE)
 manual_hparams.append(NEG_DIST_SCALE)
 manual_hparams.append(REWARD_BASE)
 
-NUM_TO_FIX = hp.HParam('num_to_fix',hp.Discrete([10,100]))
+NUM_TO_FIX = hp.HParam('num_to_fix',hp.Discrete([0,1,10,100,1000]))
 manual_hparams.append(NUM_TO_FIX)
 
 
@@ -972,9 +972,9 @@ class Agent_3:
         
 		self.tde = 0
 		self.use_reset_noise = True
-		self.n_goal = 0
+		self.n_goal = 1
 		self.bound = 0
-		self.bound_div = 1.0
+		self.bound_div = 2.0
 		
 		self.max_critic_loss = 10000
 		
@@ -986,15 +986,18 @@ class Agent_3:
 		#First stage is to just reach PFC goals, so try one goal at a time
 		if self.n_step == 0 or self.pfc.met_goal: #question
 			self.n_goal += 1
-			self.bound = min(np.floor(self.n_goal/self.bound_div) / 9.0,1.0)
-			if self.use_reset_noise and self.bound < 1.0:
+			self.bound = np.floor(self.n_goal/self.bound_div) / 9.0
+			if self.use_reset_noise and self.bound <= 1.0:
 				#self.ctbg.std_mc_init = self.hparams[STD_MC] * self.bound #doesn't work
 				self.ctbg.reset_noise()
 			if self.n_step > 0 and self.use_fix_weights:
 				self.ctbg.fix_weights()
 				self.critic.fix_weights()
 			self.goal = self.pfc.act(c_arm_pos,current_color)
-			self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
+			if self.bound <= 1.0:
+				self.goal = tf.clip_by_value(self.goal,-1.0*self.bound,self.bound)
+			else:
+				self.goal = tf.clip_by_value(self.goal,-1.0,1.0)
 			print(self.goal*self.pfc.pos_scale)
 	
 		c_arm_pos = np.array([c_arm_pos])
@@ -1040,8 +1043,9 @@ class Agent_3:
 	def update_memory(self,c_arm_pos,current_color,reward):
 		total_reward = self.pfc.check_met_goal(self.goal,c_arm_pos)
 		valuated_reward = self.pfc.valuation(reward)
-		if self.pfc.met_goal and self.bound == 1.0:
+		if self.pfc.met_goal and self.bound > 1.0:
 			self.pfc.update_memory(c_arm_pos,current_color,reward)
+			#total_reward = 0.1*total_reward #lower reward due to 'meeting goal' - that's not gonna work; it will mess up the critic
 			total_reward += valuated_reward
 		# else:
 			# if total_reward == 0 and valuated_reward < 0:
