@@ -132,7 +132,7 @@ manual_hparams.append(DIST_SCALE)
 manual_hparams.append(NEG_DIST_SCALE)
 manual_hparams.append(REWARD_BASE)
 
-NUM_TO_FIX = hp.HParam('num_to_fix',hp.Discrete([0,1,10,100,1000]))
+NUM_TO_FIX = hp.HParam('num_to_fix',hp.Discrete([0]))
 manual_hparams.append(NUM_TO_FIX)
 
 
