@@ -18,7 +18,7 @@ from tensorboard.plugins.hparams import api as hp
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 verbose = True
-GUI = False
+GUI = True
 linux = False
 if GUI:
 	import pygame
@@ -73,7 +73,7 @@ manual_hparams.append(MIN_POSITION)
 MAX_POSITION = hp.HParam('max_position',hp.Discrete([90]))
 manual_hparams.append(MAX_POSITION)
 #Lower means that the color vector is weighted more
-C_DIV = hp.HParam('c_div',hp.Discrete([255.0]))
+C_DIV = hp.HParam('c_div',hp.Discrete([255.0/4.0]))
 manual_hparams.append(C_DIV)
 MAX_GRAD = hp.HParam('max_grad',hp.Discrete([10.0])) #for Huber loss
 manual_hparams.append(MAX_GRAD)
@@ -101,6 +101,10 @@ MET_GOAL_CRITERIA = hp.HParam('met_goal_criteria',hp.Discrete([700]))
 manual_hparams.append(MET_GOAL_CRITERIA)
 MAX_TRIES = hp.HParam('max_tries',hp.Discrete([1000]))
 manual_hparams.append(MAX_TRIES)
+MET_GOAL_DECAY = hp.HParam('met_goal_decay',hp.Discrete([0.25]))
+manual_hparams.append(MET_GOAL_DECAY)
+MIN_GOAL_SCALE = hp.HParam('min_goal_scale',hp.Discrete([0.1]))
+manual_hparams.append(MIN_GOAL_SCALE)
 
 ###Critic###
 CRITIC_UNITS = hp.HParam('critic_units',hp.Discrete([1000]))
@@ -130,17 +134,23 @@ STD_D = hp.HParam('std_d',hp.Discrete([90]))
 manual_hparams.append(STD_D)
 TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.009]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.002,0.005,0.009]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.008]))
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.001]))
 manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
 USE_BATCH_NORM = hp.HParam('use_batch_norm',hp.Discrete([True]))
 manual_hparams.append(USE_BATCH_NORM)
 #if loading weights, what should be the noise (gaussian std)
-LOAD_NOISE = hp.HParam('load_noise',hp.Discrete([10.0,20.0]))
+LOAD_NOISE = hp.HParam('load_noise',hp.Discrete([2.0]))
 manual_hparams.append(LOAD_NOISE)
+
+USE_CUST = hp.HParam('use_cust',hp.Discrete([True]))
+manual_hparams.append(USE_CUST)
+
+
+
 
 METRIC_ACCURACY = 'accuracy'
 
@@ -229,20 +239,29 @@ class Actor(keras.Model):
         self.std_d_init = self.std_d
         self.tau = params['TAU']
         self.noise_scale = params['NOISE_SCALE']
-        self.noise_scale_2 = params['NOISE_SCALE_2']
+        #self.noise_scale_2 = params['NOISE_SCALE_2']
+        self.noise_scale_2 = max(self.noise_scale - 0.001,0.0001)
         self.noise_base = params['NOISE_BASE']
         self.max_fr = params['MAX_FR']
         self.use_noise = True
         #end hyperparams
         self.testing = False
-
+        self.use_cust = params['USE_CUST']
+        
         self.network = []
-        self.network.append(cust_layer(9,self.bs_units))
-        self.network.append(cust_layer(self.bs_units,self.bs_units))
-        self.network.append(cust_layer(self.bs_units,6)) #6 = nlimbs * njoints * 2
+        if self.use_cust:
+            self.network.append(cust_layer(9,self.bs_units))
+            self.network.append(cust_layer(self.bs_units,self.bs_units))
+            self.network.append(cust_layer(self.bs_units,6)) #6 = nlimbs * njoints * 2
+        else:
+            self.l1 = layers.Dense(self.bs_units,activation='relu')
+            self.l2 = layers.Dense(self.bs_units,activation='relu')
+            self.l3 = layers.Dense(6,activation='relu')
+
 
         self.bna = tf.keras.layers.BatchNormalization()
         self.bnb = tf.keras.layers.BatchNormalization()
+        
         
         
         ##test##
@@ -311,19 +330,28 @@ class Actor(keras.Model):
     
     def call(self,inputs,use_noise,bnorm):
         self.gn = layers.GaussianNoise(stddev=self.std_d)
-        out = self.network[0].call(inputs)
         #consider trying putting noise here
-        out = tf.nn.relu(out)
+        if self.use_cust:
+            out = self.network[0].call(inputs)
+            out = tf.nn.relu(out)
+        else:
+            out = self.l1(inputs)
         if self.use_batch_norm:
             out = self.bna(out,training=bnorm)
-
-        out = self.network[1].call(out)
-        out = tf.nn.relu(out)
+        if self.use_cust:
+            out = self.network[1].call(out)
+            out = tf.nn.relu(out)
+        else:
+            out = self.l2(out)
         if self.use_batch_norm:
             out = self.bnb(out,training=bnorm)
 
-        out = self.network[2].call(out)
-        out = tf.nn.relu(out)
+
+        if self.use_cust:
+            out = self.network[2].call(out)
+            out = tf.nn.relu(out)
+        else:
+            out = self.l3(out)
         if use_noise:
             out = self.gn(out)
         out = tf.clip_by_value(out,0,self.max_fr)
@@ -386,30 +414,49 @@ class Critic(keras.Model):
         self.number_to_fix = params['CRITIC_NFIX']
         self.input_sz = 9
         self.action_sz = 6
-        self.use_batch_norm = True
+        self.use_batch_norm = params['USE_BATCH_NORM']
+        self.use_cust = params['USE_CUST']
 
         self.critic_layers = []
         #color,c_pos,action
-        self.critic_layers.append(cust_layer(self.input_sz+self.action_sz,self.units))
-        self.critic_layers.append(cust_layer(self.units,self.units))
-        self.critic_layers.append(cust_layer(self.units,1))
+        if self.use_cust:
+            self.critic_layers.append(cust_layer(self.input_sz+self.action_sz,self.units))
+            self.critic_layers.append(cust_layer(self.units,self.units))
+            self.critic_layers.append(cust_layer(self.units,1))
+        else:
+            self.l1 = layers.Dense(self.units,activation='relu')
+            self.l2 = layers.Dense(self.units,activation='relu')
+            self.l3 = layers.Dense(1,activation='relu')
+
         self.bna = tf.keras.layers.BatchNormalization()
         self.bnb = tf.keras.layers.BatchNormalization()		
 
     def call(self,state,action,bnorm):
         inputs = layers.concatenate([state,action])
-        out = self.critic_layers[0].call(inputs)
-        out = tf.nn.relu(out)
+        if self.use_cust:
+            out = self.critic_layers[0].call(inputs)
+            out = tf.nn.relu(out)
+        else:
+            out = self.l1(inputs)
         if self.use_batch_norm:
+            #print(out)
             out = self.bna(out,training=bnorm)
-        
-        out = self.critic_layers[1].call(out)
-        out = tf.nn.relu(out)
+            #print(out - out_b)
+            #out = out_b
+            
+        if self.use_cust:
+            out = self.critic_layers[1].call(out)
+            out = tf.nn.relu(out)
+        else:
+            out = self.l2(out)
         if self.use_batch_norm:
             out = self.bnb(out,training=bnorm)
         
-        out = self.critic_layers[2].call(out)
-        val = tf.nn.relu(out)
+        if self.use_cust:
+            val = self.critic_layers[2].call(out)
+            val = tf.nn.relu(val)
+        else:
+            val = self.l3(out)
         
         return val
         
@@ -501,8 +548,11 @@ class Context():
         self.tries = 0
         
         #hyperparam
-        self.met_goal_criteria = 700
-        self.max_tries = 1000
+        self.met_goal_criteria = self.hparams[MET_GOAL_CRITERIA]
+        self.max_tries = self.hparams[MAX_TRIES]
+        self.met_goal_scale = 1.0
+        self.min_goal_scale = self.hparams[MIN_GOAL_SCALE]
+        self.met_goal_decay = self.hparams[MET_GOAL_DECAY]
 
     def query_reward(self,c_pos,nlimb,njoint):
         reward = np.array([0.0])
@@ -520,6 +570,7 @@ class Context():
                 elif dist > threshold1 and o.utility < 0:
                     self.met_goal += 1
         self.tries += 1
+        reward = reward * self.met_goal_scale
         return reward
     
     def check_met_goal(self):
@@ -533,6 +584,9 @@ class Context():
             self.met_goal = 0
             self.tries = 0
         return met
+    
+    def decay_reward(self):
+        self.met_goal_scale = max(self.met_goal_scale - self.met_goal_decay,self.min_goal_scale)
         
 class Memory:
 	def __init__(self):
@@ -587,10 +641,13 @@ class Agent():
         actor_params['NOISE_SCALE_2'] = self.hparams[NOISE_SCALE_2]
         actor_params['NOISE_BASE'] = self.hparams[NOISE_BASE]
         actor_params['MAX_FR'] = self.hparams[MAX_FR]
+        actor_params['USE_CUST'] = self.hparams[USE_CUST]
         
         critic_params = {}
         critic_params['CRITIC_UNITS'] = self.hparams[CRITIC_UNITS]
         critic_params['CRITIC_NFIX'] = self.hparams[CRITIC_NFIX]
+        critic_params['USE_CUST'] = self.hparams[USE_CUST]
+        critic_params['USE_BATCH_NORM'] = self.hparams[USE_BATCH_NORM]
         
         
         self.actor = Actor(actor_params)
@@ -618,7 +675,8 @@ class Agent():
         self.euclidian_pos = [0.0,0.0]
         
         self.cost = 0
-        self.cost_scale = 0.01
+        #make hyperparam
+        self.cost_scale = 0.001
         
         self.use_decay = False
         self.bnorm_train = True
@@ -710,22 +768,27 @@ class Agent():
             current_Q = self.critic(pre_mem,mem_actions,bnorm=self.bnorm_train) #bnorm only true here because these were real pairs that occurred
             td_errors = huber(target_Q,current_Q)
             self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
-        critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
-        self.critic_opt.apply_gradients(zip(critic_grad,self.critic.trainable_variables))
+        self.critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
+        #print(self.critic_grad)
+        self.critic_opt.apply_gradients(zip(self.critic_grad,self.critic.trainable_variables))
+        
+        #adjust actor noise
         self.tde = target_Q*self.tde_scale - current_Q
         self.tde = tf.reduce_mean(self.tde)
         self.tde = min(self.tde,self.max_tde)
         self.actor.update_noise(self.tde)
         
         with tf.GradientTape() as tape:
-            next_actions = self.actor(pre_mem,use_noise=False,bnorm=self.bnorm_train)
-            self.actor_loss = -tf.reduce_mean(self.critic(pre_mem,next_actions,bnorm=False))
+            self.next_actions = self.actor(pre_mem,use_noise=False,bnorm=self.bnorm_train)
+            #print(next_actions)
+            self.actor_loss = -tf.reduce_mean(self.critic(pre_mem,self.next_actions,bnorm=False))
         
         self.actor_grad = tape.gradient(self.actor_loss,self.actor.trainable_variables)
         self.actor_opt.apply_gradients(zip(self.actor_grad,self.actor.trainable_variables))
         if self.use_decay:
             self.actor.decay(self.actor_decay_rate)
             self.critic.decay(self.critic_decay_rate)
+        ###go back and fix use_cust
         self.actor.save_wts(self.log_save_label)
         self.critic.save_wts(self.log_save_label)
         
@@ -754,20 +817,26 @@ class Agent():
             tf.summary.scalar('critic loss',self.critic_loss,step=self.n_train)
             tf.summary.scalar('raw TD error',self.tde,step=self.n_train)
             tf.summary.scalar('noise',self.actor.std_d,step=self.n_train)
+            tf.summary.histogram('critic grad',self.critic_grad[0],step=self.n_train)
+            tf.summary.histogram('actor grad',self.actor_grad[0],step=self.n_train)
+            tf.summary.histogram('next actions',self.next_actions[0],step=self.n_train)
+
+            #fix, use_cust
             tf.summary.histogram('actor weights 1',self.actor.network[0].trainable_weights[0],step=self.n_train)
             tf.summary.histogram('actor weights 2',self.actor.network[1].trainable_weights[0],step=self.n_train)
             tf.summary.histogram('actor weights 3',self.actor.network[2].trainable_weights[0],step=self.n_train)
             tf.summary.histogram('critic weights 1',self.critic.critic_layers[0].trainable_weights[0],step=self.n_train)
             tf.summary.histogram('critic weights 2',self.critic.critic_layers[1].trainable_weights[0],step=self.n_train)
             tf.summary.histogram('critic weights 3',self.critic.critic_layers[2].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('bnorma0',self.actor.bna.get_weights()[0],step=self.n_train)
-            tf.summary.histogram('bnorma1',self.actor.bna.get_weights()[1],step=self.n_train)
-            tf.summary.histogram('bnorma2',self.actor.bna.get_weights()[2],step=self.n_train)
-            tf.summary.histogram('bnorma3',self.actor.bna.get_weights()[3],step=self.n_train)
-            tf.summary.histogram('bnormb0',self.actor.bnb.get_weights()[0],step=self.n_train)
-            tf.summary.histogram('bnormb1',self.actor.bnb.get_weights()[1],step=self.n_train)
-            tf.summary.histogram('bnormb2',self.actor.bnb.get_weights()[2],step=self.n_train)
-            tf.summary.histogram('bnormb3',self.actor.bnb.get_weights()[3],step=self.n_train)
+            if self.hparams[USE_BATCH_NORM]:
+                tf.summary.histogram('bnorma0',self.actor.bna.get_weights()[0],step=self.n_train)
+                tf.summary.histogram('bnorma1',self.actor.bna.get_weights()[1],step=self.n_train)
+                tf.summary.histogram('bnorma2',self.actor.bna.get_weights()[2],step=self.n_train)
+                tf.summary.histogram('bnorma3',self.actor.bna.get_weights()[3],step=self.n_train)
+                tf.summary.histogram('bnormb0',self.actor.bnb.get_weights()[0],step=self.n_train)
+                tf.summary.histogram('bnormb1',self.actor.bnb.get_weights()[1],step=self.n_train)
+                tf.summary.histogram('bnormb2',self.actor.bnb.get_weights()[2],step=self.n_train)
+                tf.summary.histogram('bnormb3',self.actor.bnb.get_weights()[3],step=self.n_train)
 
 
 
@@ -796,17 +865,17 @@ class Environment(threading.Thread):
         #end hyperparams
         self.log_dir = ''
         self.current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
-        #param_str = str({h.name: hparams[h] for h in hparams})
+        param_str = str({h.name: self.hparams[h] for h in hparams})
         if linux:
             self.log_dir = '/scratch/users/gchatt/logs/' + self.current_time
             self.summary_writer = tf.summary.create_file_writer(self.log_dir)
-            #with open(log_dir+'/header.txt','w') as header_file:
-                #header_file.write(param_str)
+            with open(self.log_dir+'/header.txt','w') as header_file:
+                header_file.write(param_str)
         else:
             self.log_dir = os.getcwd()+'\\logs\\' + self.current_time
             self.summary_writer = tf.summary.create_file_writer(self.log_dir)
-            #with open(log_dir+'\\header.txt','w') as header_file:
-                #header_file.write(param_str)
+            with open(self.log_dir+'\\header.txt','w') as header_file:
+                header_file.write(param_str)
 
         self.agent = Agent(self.summary_writer,self.current_time,hparams=self.hparams)
         self.contexts = []
@@ -815,15 +884,22 @@ class Environment(threading.Thread):
         self.first_round = True #if haven't completed all contexts yet
         self.loading_state = False
         self.load_dir_label = ''
-        self.fix_weights = True
+        ###go back and fix use_cust
+        self.fix_weights = False
+        if self.hparams[USE_CUST]:
+            self.fix_weights = True
+        
+        self.solved_context = []
+            
+        self.rounds = 0
 
     def run(self):
-        self.gen_env()
-        #self.load_env(os.getcwd()+'\\logs\\20200721-223830062024')
+        #self.gen_env()
+        self.load_env(os.getcwd()+'\\logs\\20200823-202109009195')
         self.start_round()
         with self.summary_writer.as_default():
             hp.hparams(self.hparams)
-            tf.summary.scalar(METRIC_ACCURACY,self.last_reward,step=1)
+            tf.summary.scalar(METRIC_ACCURACY,self.agent.last_reward[0],step=1)
 
 	
     def start_round(self):
@@ -831,7 +907,8 @@ class Environment(threading.Thread):
         self.n_step_total = 0
         self.n_session = 0 #session += 1 whenever the limbs reset to neutral pos
         context = self.contexts[self.cc_idx] #current context
-        print(context.color)
+        if verbose:
+            print(context.color)
         done = False
         
         if GUI:
@@ -873,10 +950,8 @@ class Environment(threading.Thread):
             self.agent.load_existing_ac(self.load_dir_label)
             self.fix_weights = False
             
-        
         self.agent.act(context)
         pos = self.get_euclidian_points(self.agent.c_pos,self.agent.n_limbs) #slice at 0
-        #print(pos)
         self.agent.euclidian_pos = pos[0][self.agent.n_joints]
         reward = context.query_reward(pos,self.agent.n_limbs,self.agent.n_joints)
         self.agent.update_memory(reward)
@@ -886,6 +961,11 @@ class Environment(threading.Thread):
         if self.n_step >= self.max_steps:
             self.n_step = 0
             self.n_session += 1
+            
+            self.cc_idx += 1
+            if(self.cc_idx >= len(self.contexts)):
+                self.cc_idx = 0
+            context = self.contexts[self.cc_idx]
             self.agent.neutral()
         
         if self.n_session >= self.max_sessions:
@@ -893,31 +973,46 @@ class Environment(threading.Thread):
             
         if self.n_step_total % self.update_freq == 0:
             self.agent.train()
-            #add an 'and self.first_round'
         
         if context.check_met_goal() == True:
-            self.cc_idx += 1
-            self.agent.neutral()
-            self.agent.memory.clear()
-            self.agent.bnorm_train = False
-            if(self.cc_idx >= len(self.contexts)):
-                self.cc_idx = 0
-                self.first_round = False
-                round_complete = True
-            if round_complete:
-                self.agent.actor_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
-                self.agent.critic_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
-                self.agent.use_decay = False
-            if self.first_round:
-                if self.fix_weights:
-                    self.agent.actor.fix_weights()
-                    self.agent.critic.fix_weights()
-                #can put 'save' here too
-                self.agent.actor.reset_noise()
-            #update context    
-            context = self.contexts[self.cc_idx]
             if verbose:
                 print(context.color)
+            if not self.cc_idx in self.solved_context:
+                self.solved_context.append(self.cc_idx)
+                if self.fix_weights:
+                    self.agent.actor.fix_weights()
+                    self.agent.critic.fix_weights()                                    
+            if len(self.contexts) == len(self.solved_context):
+                done = True
+            context.decay_reward()
+        
+            #self.cc_idx += 1
+            #self.agent.neutral()
+            #self.agent.memory.clear()
+            #self.agent.bnorm_train = False
+            #self.agent.actor.noise_scale = 0.001
+            #self.agent.actor.noise_scale_2 = 0.0009
+            
+            #if self.first_round and self.fix_weights:
+                #self.agent.actor.fix_weights()
+                #self.agent.critic.fix_weights()
+            
+            #if(self.cc_idx >= len(self.contexts)):
+                #self.cc_idx = 0
+                #self.rounds += 1
+                #if self.first_round:
+                    #self.agent.actor_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
+                    #self.agent.critic_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
+                    #self.agent.use_decay = False
+                    #self.agent.bnorm_train = False
+                    #self.first_round = False
+                #if self.rounds >= 10:
+                    #self.agent.bnorm_train = False
+
+            #if self.first_round:
+                #self.agent.actor.reset_noise()
+            #update context    
+            #context = self.contexts[self.cc_idx]
         return pos, context, done
     
     def gen_env(self):
@@ -1028,6 +1123,9 @@ if linux:
             NOISE_BASE,\
             USE_BATCH_NORM, \
             LOAD_NOISE, \
+            USE_CUST, \
+            MIN_GOAL_SCALE, \
+            MET_GOAL_DECAY, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
@@ -1075,6 +1173,9 @@ else:
             NOISE_BASE,\
             USE_BATCH_NORM, 
             LOAD_NOISE, \
+            USE_CUST, \
+            MIN_GOAL_SCALE, \
+            MET_GOAL_DECAY, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
@@ -1114,7 +1215,7 @@ if len(hp_mult) > 0:
                 mv_envs[n].daemon = True
             #mv_envs[n].gen_env()
             #print('here')
-            mv_envs[0].load_env(os.getcwd()+'\\logs\\20200729-211841357894')
+            #mv_envs[0].load_env(os.getcwd()+'\\logs\\20200729-211841357894')
             mv_envs[n].start()
             #print('here')
             n += 1
@@ -1132,7 +1233,7 @@ else:
     mv_envs.append(Environment(hparams))
     if not linux:
         mv_envs[0].daemon = True
-    mv_envs[0].load_env(os.getcwd()+'\\logs\\20200729-211841357894')
+    #mv_envs[0].load_env(os.getcwd()+'\\logs\\20200729-211841357894')
     mv_envs[0].start()
 
 if (not linux) and manual_exit:
