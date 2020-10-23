@@ -6,6 +6,7 @@ import os
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from tensorflow.keras.constraints import non_neg
 import numpy as np
 from numpy import random
 import copy
@@ -14,14 +15,17 @@ import datetime
 from collections import deque
 import threading
 from tensorboard.plugins.hparams import api as hp
+import time
+from scipy.spatial import distance_matrix
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 verbose = True
-GUI = True
+GUI = False
+use_sleep = False
 linux = False
 if GUI:
-	import pygame
+    import pygame
 manual_exit = True
 if linux:
 	manual_exit = False
@@ -30,7 +34,7 @@ if linux:
 manual_hparams = []
 
 ###Environment###
-N_CONTEXTS = hp.HParam('n_contexts',hp.Discrete([2]))
+N_CONTEXTS = hp.HParam('n_contexts',hp.Discrete([4]))
 manual_hparams.append(N_CONTEXTS)
 N_OBJECTS = hp.HParam('n_objects',hp.Discrete([1]))
 manual_hparams.append(N_OBJECTS)
@@ -47,16 +51,15 @@ manual_hparams.append(THRESHOLD_RATIO_MIN)
 THRESHOLD_RATIO_MAX = hp.HParam('threshold_ratio_max',hp.Discrete([3]))
 manual_hparams.append(THRESHOLD_RATIO_MAX)
 #distance threshold for meeting reward vs punishment (cost)
-#Try lower...
-THRESHOLD_2 = hp.HParam('threshold_2',hp.Discrete([10]))
+THRESHOLD_2 = hp.HParam('threshold_2',hp.Discrete([5]))
 manual_hparams.append(THRESHOLD_2)
-UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([10]))
+UPDATE_FREQ = hp.HParam('update_freq',hp.Discrete([100]))
 manual_hparams.append(UPDATE_FREQ)
 
 #Steps before returning to neutral
-MAX_STEPS = hp.HParam('max_steps',hp.Discrete([5]))
+MAX_STEPS = hp.HParam('max_steps',hp.Discrete([5])) #CURRENTLY THIS CAN'T BE CHANGED
 manual_hparams.append(MAX_STEPS)
-MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([1000000]))
+MAX_SESSIONS = hp.HParam('max_sessions',hp.Discrete([10000000]))
 manual_hparams.append(MAX_SESSIONS)
 
 BS_COMPLETED_LR = hp.HParam('bs_completed_lr',hp.Discrete([0.0001]))
@@ -73,7 +76,7 @@ manual_hparams.append(MIN_POSITION)
 MAX_POSITION = hp.HParam('max_position',hp.Discrete([90]))
 manual_hparams.append(MAX_POSITION)
 #Lower means that the color vector is weighted more
-C_DIV = hp.HParam('c_div',hp.Discrete([255.0/4.0]))
+C_DIV = hp.HParam('c_div',hp.Discrete([255.0/16.0]))
 manual_hparams.append(C_DIV)
 MAX_GRAD = hp.HParam('max_grad',hp.Discrete([10.0])) #for Huber loss
 manual_hparams.append(MAX_GRAD)
@@ -97,7 +100,7 @@ CRITIC_DECAY_RATE = hp.HParam('critic_decay_rate',hp.Discrete([0.00001]))
 manual_hparams.append(CRITIC_DECAY_RATE)
 
 ###Context###
-MET_GOAL_CRITERIA = hp.HParam('met_goal_criteria',hp.Discrete([700]))
+MET_GOAL_CRITERIA = hp.HParam('met_goal_criteria',hp.Discrete([600]))
 manual_hparams.append(MET_GOAL_CRITERIA)
 MAX_TRIES = hp.HParam('max_tries',hp.Discrete([1000]))
 manual_hparams.append(MAX_TRIES)
@@ -121,22 +124,27 @@ manual_hparams.append(BS_UNITS)
 #striatal layer units
 STR_UNITS = hp.HParam('str_units',hp.Discrete([1000]))
 manual_hparams.append(STR_UNITS)
+GPI_UNITS = hp.HParam('gpi_units',hp.Discrete([100]))
+manual_hparams.append(GPI_UNITS)
 
 ACTOR_NFIX = hp.HParam('actor_nfix',hp.Discrete([1000]))
 manual_hparams.append(ACTOR_NFIX)
+STR_NFIX = hp.HParam('str_nfix',hp.Discrete([100]))
+manual_hparams.append(STR_NFIX)
 MAX_FR = hp.HParam('max_fr',hp.Discrete([200]))
 manual_hparams.append(MAX_FR)
 #Noise parameters
 #noise = max(min(std_d - self.noise_scale*(loss - self.tau),self.std_d_init),noise_base)
 #min of noise 1, max noise of the initial noise term (e.g. 90)
-#loss is TDE (raw)
+#loss is TDE (raw) (or now as of 10/19/20, * a measure of max_reward)
+#I can't remember why I have a tau
 STD_D = hp.HParam('std_d',hp.Discrete([90]))
 manual_hparams.append(STD_D)
 TAU = hp.HParam('tau',hp.Discrete([0.1]))
 manual_hparams.append(TAU)
-NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.002,0.005,0.009]))
+NOISE_SCALE = hp.HParam('noise_scale',hp.Discrete([0.02]))
 manual_hparams.append(NOISE_SCALE)
-NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.001]))
+NOISE_SCALE_2 = hp.HParam('noise_scale_2',hp.Discrete([0.008]))
 manual_hparams.append(NOISE_SCALE_2)
 NOISE_BASE = hp.HParam('noise_base',hp.Discrete([3.0]))
 manual_hparams.append(NOISE_BASE)
@@ -149,7 +157,22 @@ manual_hparams.append(LOAD_NOISE)
 USE_CUST = hp.HParam('use_cust',hp.Discrete([True]))
 manual_hparams.append(USE_CUST)
 
+LOADING_STATE = hp.HParam('loading_state',hp.Discrete([False]))
+manual_hparams.append(LOADING_STATE)
 
+USE_BG = hp.HParam('use_bg',hp.Discrete([False]))
+manual_hparams.append(USE_BG)
+USE_BSL1RNN = hp.HParam('use_bsl1rnn',hp.Discrete([True]))
+manual_hparams.append(USE_BSL1RNN)
+
+GPI_BIAS = hp.HParam('gpi_bias',hp.Discrete([30.0]))
+manual_hparams.append(GPI_BIAS)
+GPI_TRAINABLE = hp.HParam('gpi_trainable',hp.Discrete([True]))
+manual_hparams.append(GPI_TRAINABLE)
+
+#expand the points in memory (by linear interpolation) to allow for more points for critic to learn from
+EXPAND_N = hp.HParam('expand_n',hp.Discrete([100]))
+manual_hparams.append(EXPAND_N)
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -157,15 +180,18 @@ METRIC_ACCURACY = 'accuracy'
 
 class cust_layer(layers.Layer):
 	
-    def __init__(self,input_dim,units):
+    def __init__(self,input_dim,units,w_init=[-0.001,0.001],b_init=[0.0,0.0],nonneg=False,use_trainable=True):
         super(cust_layer,self).__init__()
         self.input_dim = input_dim
         self.units = units
-        self.w_init = tf.random_uniform_initializer(minval=-0.001, maxval=0.001)
-        self.b_init = tf.random_uniform_initializer(minval=-0.0, maxval=0.0)
+        self.w_init = tf.random_uniform_initializer(minval=w_init[0], maxval=w_init[1])
+        self.b_init = tf.random_uniform_initializer(minval=b_init[0], maxval=b_init[1])
         #decay_rate_init = tf.random_uniform_initializer(minval=decay_init[0], maxval=decay_init[1])
-        self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=self.w_init,trainable=True)
-        self.b = self.add_weight(shape=(self.units,), initializer=self.b_init, trainable=True)
+        if nonneg:
+            self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=self.w_init,trainable=use_trainable,constraint=non_neg())
+        else:
+            self.w = self.add_weight(shape=(self.input_dim,self.units),initializer=self.w_init,trainable=use_trainable)  
+        self.b = self.add_weight(shape=(self.units,), initializer=self.b_init, trainable=use_trainable)
         
         #self.decay_rates = np.ones_like(self.w.numpy(),dtype=float) * 0.0001
         #self.decay_rate = 0.0001
@@ -176,6 +202,7 @@ class cust_layer(layers.Layer):
         
         self.added_inputs = False
         self.aw = []
+        self.aw_stored_init = []
         self.am = []
         self.afv = []
 
@@ -183,17 +210,35 @@ class cust_layer(layers.Layer):
         masked_weights = tf.multiply(self.mask,self.w)
         w = masked_weights + self.fixed_values
         out = tf.tensordot(inputs,w,[[1],[0]]) + self.b
-        
         if len(new_in) > 0:
             for i in range(len(new_in)):
+                #print(inputs)
+                
+                #print(new_in[0])
+                #print('in custom layer')
+                #print(len(self.am))
+                #print(len(self.aw))
+                #print(len(self.afv))
+                #print(len(new_in))
+                #print(i)
+                #print(new_in[i])
+                #print(self.aw[i])
+                #print(self.am[i])
+                #print(self.afv[i])
                 mw = tf.multiply(self.am[i],self.aw[i])
+                
                 w = mw + self.afv[i]
-                out += tf.tensordot(new_in[i],w)
-        
+                #print(tf.tensordot(new_in[i],w,[[1],[0]]))
+                out += tf.tensordot(new_in[i],w,[[1],[0]])
+            #print('here')
+            #print(tf.tensordot(new_in[i],w,[[1],[0]]))
+            #print(out)
         return out
 
     def save_init_wts(self):
         self.initial_weights = self.w.numpy()
+        for i in range(len(self.aw)):
+            self.aw_stored_init.append(self.aw[i].numpy())
         
     #def get_config(self):
         #config = super(cust_layer,self).get_config()
@@ -203,13 +248,19 @@ class cust_layer(layers.Layer):
     #probably redo
     def get_wts(self):
         #all in numpy format
-        return self.w.numpy(),self.b.numpy(),self.mask,self.fixed_values
+        return self.w.numpy(),self.b.numpy(),self.mask,self.fixed_values, self.aw, self.am, self.afv
     
-    def load_wts(self,w,b,m,fv):
+    def load_wts(self,w,b,m,fv,aw_in=[]):
         #dependent on number of weight variables set during initiation
-        self.set_weights([tf.convert_to_tensor(w,dtype=tf.float32),tf.convert_to_tensor(b,dtype=tf.float32)])
         self.mask = m
         self.fixed_valeus = fv
+        if len(aw_in) == 0:
+            self.set_weights([tf.convert_to_tensor(w,dtype=tf.float32),tf.convert_to_tensor(b,dtype=tf.float32)])
+        elif len(aw_in) == 1:
+            self.set_weights([tf.convert_to_tensor(w,dtype=tf.float32),tf.convert_to_tensor(b,dtype=tf.float32),tf.convert_to_tensor(aw_in[0],dtype=tf.float32)])
+        elif len(aw_in) == 2:
+            self.set_weights([tf.convert_to_tensor(w,dtype=tf.float32),tf.convert_to_tensor(b,dtype=tf.float32),tf.convert_to_tensor(aw_in[0],dtype=tf.float32),tf.convert_to_tensor(aw_in[1],dtype=tf.float32)])
+        
 
     #need to redo for addnl weights
     def decay(self,decay_rate):
@@ -220,13 +271,26 @@ class cust_layer(layers.Layer):
         dw = tf.convert_to_tensor(dw,dtype=tf.float32)
         self.set_weights([dw,self.get_weights()[1]])
     
-    def add_inputs(self,input_dim,units):
-        self.aw.append(self.add_weight(shape=(self.input_dim,self.units),initializer=self.w_init,trainable=True))
-        self.am.append(np.ones_like(self.aw[len(aw)-1].numpy()))
-        self.afv.append(np.zeros_like(self.aw[len(aw)-1].numpy()))
-
+    def add_inputs(self,input_dim,aw_init=[-0.001,0.001],nonneg=False,use_trainable=True,am_in=[],afv_in=[]):
+        #print('here')
+        self.added_inputs = True
+        self.aw_init = tf.random_uniform_initializer(minval=aw_init[0], maxval=aw_init[1])
+        if nonneg:
+            self.aw.append(self.add_weight(shape=(input_dim,self.units),initializer=self.aw_init,trainable=use_trainable,constraint=non_neg()))
+        else:
+            self.aw.append(self.add_weight(shape=(input_dim,self.units),initializer=self.aw_init,trainable=use_trainable))
         
-        
+        if len(am_in) > 0:
+            for i in range(len(am_in)):
+                self.am.append(am_in[i])
+        else:
+            self.am.append(np.ones_like(self.aw[len(self.aw)-1].numpy()))
+            
+        if len(afv_in) > 0:
+            for i in range(len(afv_in)):
+                self.afv.append(afv_in[i])
+        else:
+            self.afv.append(np.zeros_like(self.aw[len(self.aw)-1].numpy()))    
         
 class Actor(keras.Model):
     def __init__(self,params):
@@ -240,19 +304,48 @@ class Actor(keras.Model):
         self.tau = params['TAU']
         self.noise_scale = params['NOISE_SCALE']
         #self.noise_scale_2 = params['NOISE_SCALE_2']
-        self.noise_scale_2 = max(self.noise_scale - 0.001,0.0001)
+        self.noise_scale_2 = max(self.noise_scale - 0.001,0.001)
         self.noise_base = params['NOISE_BASE']
         self.max_fr = params['MAX_FR']
         self.use_noise = True
         #end hyperparams
         self.testing = False
         self.use_cust = params['USE_CUST']
+        self.use_trainable = params['USE_TRAINABLE']
+        self.use_bg = params['USE_BG']
+        self.use_bsl1rnn = params['USE_BSL1RNN']
+        self.gpi_bias = params['GPI_BIAS']
+        self.str_nfix = params['STR_NFIX']
+        self.gpi_trainable = params['GPI_TRAINABLE']
+        
+        ##
+        self.str_inputsz = 12
+        self.str_units = params['STR_UNITS']
+        self.gpi_units = params['GPI_UNITS']
+        if self.use_bg:
+            self.bg = []
+            self.bgbn = [] #batch_norm
+            self.last_str_out = []
+            self.last_gpi_out = []
+            
+            #input, output
+            #both weights are trainable
+            self.bg.append(cust_layer(self.str_inputsz,self.str_units))
+            self.bg.append(cust_layer(self.str_units,self.gpi_units,w_init=[-0.001,0.001],b_init=[self.gpi_bias,self.gpi_bias],nonneg=False,use_trainable=self.gpi_trainable)) #positive bias, test both nonneg true and false
+            
+            #batch_norm
+            #Only one for now, but decide if need one on the output since it's going to another layer
+            self.bgbn.append(tf.keras.layers.BatchNormalization())
+            self.set_bgbn = []
+        ######
+      
         
         self.network = []
         if self.use_cust:
-            self.network.append(cust_layer(9,self.bs_units))
-            self.network.append(cust_layer(self.bs_units,self.bs_units))
-            self.network.append(cust_layer(self.bs_units,6)) #6 = nlimbs * njoints * 2
+            #making the input layer trainable; test this on and off
+            self.network.append(cust_layer(9,self.bs_units,use_trainable=self.use_trainable))
+            self.network.append(cust_layer(self.bs_units,self.bs_units,use_trainable=self.use_trainable))
+            self.network.append(cust_layer(self.bs_units,6,use_trainable=self.use_trainable)) #6 = nlimbs * njoints * 2
         else:
             self.l1 = layers.Dense(self.bs_units,activation='relu')
             self.l2 = layers.Dense(self.bs_units,activation='relu')
@@ -262,23 +355,9 @@ class Actor(keras.Model):
         self.bna = tf.keras.layers.BatchNormalization()
         self.bnb = tf.keras.layers.BatchNormalization()
         
+        self.load = False
         
-        
-        ##test##
-        if self.testing:
-            self.bs = []
-            self.bg = []
-            self.bs.append(cust_layer(9,self.bs_units))
-            self.bs.append(cust_layer(self.bs_units,self.bs_units))
-            self.bs.append(cust_layer(self.bs_units,6)) #6 = nlimbs * njoints * 2
-            
-            self.bg.append(cust_layer(9,self.str_units))
-            
-            self.bn = []
-            for i in range(len(self.network) - 1):
-                self.bn.append(tf.keras.layers.BatchNormalization())
-            
-        ##end test##
+        self.l1_last_out = []
         
         self.n_step = 0
 		
@@ -292,30 +371,52 @@ class Actor(keras.Model):
         self.std_d = self.std_d_init
 	
     def fix_weights(self):
+        #fix the weights that have the largest distance vector from initiation
         gv = []
+        gv_bg = []
         #get the distance vectors for each layer
-        for i in range(len(self.network)):
-            gv.append(np.absolute((self.network[i].w - self.network[i].initial_weights).numpy()))
+        
+        if self.use_trainable:
+            for i in range(len(self.network)):
+                gv.append(np.absolute((self.network[i].w - self.network[i].initial_weights).numpy()))
 
-        for i in range(self.number_to_fix):
-            choice = random.randint(len(self.network))
-            gv_choice = gv[choice]
-            max_ind = np.unravel_index(np.argmax(gv_choice,axis=None),gv_choice.shape)
-            #print(gv_choice.shape)
-            #print(max_ind)
-            # max_ind is a tuple. Can use [] to query; can also go in gv[max_ind] like this to get the max value
-            already_fixed = (self.network[choice].mask[max_ind] == 0) #Boolean. Is the mask already 0?
-            while already_fixed:
-                gv_choice[max_ind] = 0 #set the gv value to 0 so it is not picked again
+
+            for i in range(self.number_to_fix):
                 choice = random.randint(len(self.network))
                 gv_choice = gv[choice]
                 max_ind = np.unravel_index(np.argmax(gv_choice,axis=None),gv_choice.shape)
-                already_fixed = (self.network[choice].mask[max_ind] == 0)
+                #print(gv_choice.shape)
+                #print(max_ind)
+                # max_ind is a tuple. Can use [] to query; can also go in gv[max_ind] like this to get the max value
+                already_fixed = (self.network[choice].mask[max_ind] == 0) #Boolean. Is the mask already 0?
+                while already_fixed:
+                    gv_choice[max_ind] = 0 #set the gv value to 0 so it is not picked again
+                    choice = random.randint(len(self.network))
+                    gv_choice = gv[choice]
+                    max_ind = np.unravel_index(np.argmax(gv_choice,axis=None),gv_choice.shape)
+                    already_fixed = (self.network[choice].mask[max_ind] == 0)
+            # set mask to 0 (initialized as ones)
+            self.network[choice].mask[max_ind] = 0
+            # set the fixed value to the current weight
+            self.network[choice].fixed_values[max_ind] = self.network[choice].w[max_ind]
+        
+        if self.use_bg:
+            gv_bg = np.absolute((self.bg[0].w - self.bg[0].initial_weights).numpy())
+            for i in range(self.str_nfix):    
+                max_bg_ind = np.unravel_index(np.argmax(gv_bg,axis=None),gv_bg.shape)
+                already_fixed_bg = (self.bg[0].mask[max_bg_ind] == 0) #boolean
+                while already_fixed_bg:
+                    if verbose:
+                        print('bg weight was already fixed. trying another')
+                    gv_bg[max_bg_ind] = 0
+                    max_bg_ind = np.unravel_index(np.argmax(gv_bg,axis=None),gv_bg.shape)
+                    already_fixed_bg = (self.bg[0].mask[max_bg_ind] == 0) #boolean
+            # set mask to 0 (initialized as ones)
+            self.bg[0].mask[max_bg_ind] = 0
+            # set the fixed value to the current weight
+            self.bg[0].fixed_values[max_bg_ind] = self.bg[0].w[max_bg_ind]                
 
-        # set mask to 0 (initialized as ones)
-        self.network[choice].mask[max_ind] = 0
-        # set the fixed value to the current weight
-        self.network[choice].fixed_values[max_ind] = self.network[choice].w[max_ind]
+
     
     def decay(self,decay_rate):
         for i in range(len(self.network)):
@@ -324,20 +425,53 @@ class Actor(keras.Model):
     def save_init_weights(self):
         for i in range(len(self.network)):
             self.network[i].save_init_wts()
+        if self.use_bg:
+            for i in range(len(self.bg)):
+                self.bg[i].save_init_wts()
     
-    #def call_test(self,inputs,use_noise,bnorm):
-        
-    
-    def call(self,inputs,use_noise,bnorm):
+    def call(self,bs_input=[],bg_input=[],use_noise=True,bnorm=False,new_in=[]):
+        #print('in call '+str(len(new_in)))
+        #print(new_in)
         self.gn = layers.GaussianNoise(stddev=self.std_d)
-        #consider trying putting noise here
+        
+        if(self.use_bg):
+            #striatum
+            out = self.bg[0].call(bg_input)
+            out = tf.nn.relu(out)
+            if self.use_noise:
+                out = self.gn(out)
+            #out = -1 * out #forced inhibition; 'out' itself can never be negative due to the relu activation function
+            self.last_str_out = out
+            #gpi
+            #batchnorm
+            if self.use_batch_norm:
+                out = self.bgbn[0](out,training=bnorm)
+            out = self.bg[1].call(out)
+            out = tf.nn.relu(out)
+            bgout = -1 * out #forced inhibition
+            self.last_gpi_out = bgout
+            new_in.append(bgout)
+            #print(bgout)
+        
+        
+        #Brainstem
+        
+        #consider trying putting noise here (ie why SMCx to BG and CM/Pf to BG?)
+        
+        #Layer 1 Brainstem (BS)
         if self.use_cust:
-            out = self.network[0].call(inputs)
+            out = self.network[0].call(bs_input,new_in)
             out = tf.nn.relu(out)
         else:
-            out = self.l1(inputs)
+            out = self.l1(bs_input)
         if self.use_batch_norm:
             out = self.bna(out,training=bnorm)
+
+        #Store L1 out, can be used to create RNN. Currently accessed by the 'agent' class and then fed in via actor.call, new_in   
+        #this is post batch_norm
+        self.l1_last_out = copy.deepcopy(out)
+        
+        #Layer 2 Brainstem
         if self.use_cust:
             out = self.network[1].call(out)
             out = tf.nn.relu(out)
@@ -346,7 +480,7 @@ class Actor(keras.Model):
         if self.use_batch_norm:
             out = self.bnb(out,training=bnorm)
 
-
+        #Layer 3 Brainstem
         if self.use_cust:
             out = self.network[2].call(out)
             out = tf.nn.relu(out)
@@ -354,57 +488,153 @@ class Actor(keras.Model):
             out = self.l3(out)
         if use_noise:
             out = self.gn(out)
+        #Clip to max firing rate
         out = tf.clip_by_value(out,0,self.max_fr)
-        
-        #print(self.bnb.get_config())
-        #print(len(self.bnb.get_weights()))
 
         self.n_step += 1
-
+        if(self.n_step == 1 and self.load):
+            self.bna.set_weights(self.set_bna)
+            self.bnb.set_weights(self.set_bnb)
+            if self.use_bg and len(self.set_bgbn) > 0:
+                for i in range(len(self.bgbn)):
+                    self.bgbn[i].set_weights(self.set_bgbn[i])
+                
+        
+        new_in.clear()
         return out
     
     def save_wts(self,label):
-        save_label = label
+        bs_label = label
+        bg_label = label
         if linux:
-            save_label = '/scratch/users/gchatt/logs/' + label + '/actor_layer_'
+            bs_label = '/scratch/users/gchatt/logs/' + label + '/bs_layer_'
+            bg_label = '/scratch/users/gchatt/logs/' + label + '/bg_layer_'
         else:
-            save_label = os.getcwd()+'\\logs\\'+ label +'\\actor_layer_'
+            bs_label = os.getcwd()+'\\logs\\'+ label +'\\bs_layer_'
+            bg_label = os.getcwd()+'\\logs\\'+ label +'\\bg_layer_'
         for i in range(len(self.network)):
-            w,b,m,fv = self.network[i].get_wts()
-            np.save(save_label+str(i)+'_weights',w,allow_pickle=False)
-            np.save(save_label+str(i)+'_biases',b,allow_pickle=False)
-            np.save(save_label+str(i)+'_mask',m,allow_pickle=False)
-            np.save(save_label+str(i)+'_fixed_values',fv,allow_pickle=False)
+            w,b,m,fv,aw,am,afv = self.network[i].get_wts()
+            np.save(bs_label+str(i)+'_weights',w,allow_pickle=False)
+            np.save(bs_label+str(i)+'_biases',b,allow_pickle=False)
+            np.save(bs_label+str(i)+'_mask',m,allow_pickle=False)
+            np.save(bs_label+str(i)+'_fixed_values',fv,allow_pickle=False)
+            if self.network[i].added_inputs:
+                for x in range(len(aw)):
+                    np.save(bs_label+str(i)+'_added_weight_'+str(x),aw[x].numpy(),allow_pickle=False)
+                    np.save(bs_label+str(i)+'_added_mask_'+str(x),am[x],allow_pickle=False)
+                    np.save(bs_label+str(i)+'_added_fixed_value_'+str(x),afv[x],allow_pickle=False)
+        if self.use_bg:
+            for i in range(len(self.bg)):
+                w,b,m,fv,aw,am,afv = self.bg[i].get_wts()
+                np.save(bg_label+str(i)+'_weights',w,allow_pickle=False)
+                np.save(bg_label+str(i)+'_biases',b,allow_pickle=False)
+                np.save(bg_label+str(i)+'_mask',m,allow_pickle=False)
+                np.save(bg_label+str(i)+'_fixed_values',fv,allow_pickle=False)
+                if self.bg[i].added_inputs:
+                    for x in range(len(aw)):
+                        np.save(bg_label+str(i)+'_added_weight_'+str(x),aw[x].numpy(),allow_pickle=False)
+                        np.save(bg_label+str(i)+'_added_mask_'+str(x),am[x],allow_pickle=False)
+                        np.save(bg_label+str(i)+'_added_fixed_value_'+str(x),afv[x],allow_pickle=False)                
         if self.use_batch_norm:
-            np.save(save_label+'batch_norm_a_0',self.bna.get_weights()[0],allow_pickle=False)
-            np.save(save_label+'batch_norm_a_1',self.bna.get_weights()[1],allow_pickle=False)
-            np.save(save_label+'batch_norm_a_2',self.bna.get_weights()[2],allow_pickle=False)
-            np.save(save_label+'batch_norm_a_3',self.bna.get_weights()[3],allow_pickle=False)            
-            np.save(save_label+'batch_norm_b_0',self.bnb.get_weights()[0],allow_pickle=False)
-            np.save(save_label+'batch_norm_b_1',self.bnb.get_weights()[1],allow_pickle=False)
-            np.save(save_label+'batch_norm_b_2',self.bnb.get_weights()[2],allow_pickle=False)
-            np.save(save_label+'batch_norm_b_3',self.bnb.get_weights()[3],allow_pickle=False)            
+            np.save(bs_label+'batch_norm_a_0',self.bna.get_weights()[0],allow_pickle=False)
+            np.save(bs_label+'batch_norm_a_1',self.bna.get_weights()[1],allow_pickle=False)
+            np.save(bs_label+'batch_norm_a_2',self.bna.get_weights()[2],allow_pickle=False)
+            np.save(bs_label+'batch_norm_a_3',self.bna.get_weights()[3],allow_pickle=False)            
+            np.save(bs_label+'batch_norm_b_0',self.bnb.get_weights()[0],allow_pickle=False)
+            np.save(bs_label+'batch_norm_b_1',self.bnb.get_weights()[1],allow_pickle=False)
+            np.save(bs_label+'batch_norm_b_2',self.bnb.get_weights()[2],allow_pickle=False)
+            np.save(bs_label+'batch_norm_b_3',self.bnb.get_weights()[3],allow_pickle=False)
+            if self.use_bg:
+                for i in range(len(self.bgbn)):
+                    #0 to 3
+                    for x in range(4):
+                        np.save(bg_label+'batch_norm_'+str(i)+'_'+str(x),self.bgbn[i].get_weights()[x],allow_pickle=False)
  
     def load_wts(self,dir_label):
+        self.load = True
+        added = 0
+        aw = []
+        am = []
+        afv = []
+        make_rnn = False
+        make_bg = False
         for i in range(len(self.network)):
-            w = np.load(dir_label+str(i)+'_weights.npy')
-            b = np.load(dir_label+str(i)+'_biases.npy')
-            m = np.load(dir_label+str(i)+'_mask.npy')
-            fv = np.load(dir_label+str(i)+'_fixed_values.npy')
-            self.network[i].load_wts(w,b,m,fv)
-        if self.use_batch_norm:
-            a0 = np.load(dir_label+'batch_norm_a_0.npy')
-            a1 = np.load(dir_label+'batch_norm_a_1.npy')
-            a2 = np.load(dir_label+'batch_norm_a_2.npy')
-            a3 = np.load(dir_label+'batch_norm_a_3.npy')
+            w = np.load(dir_label+'bs_layer_'+str(i)+'_weights.npy')
+            b = np.load(dir_label+'bs_layer_'+str(i)+'_biases.npy')
+            m = np.load(dir_label+'bs_layer_'+str(i)+'_mask.npy')
+            fv = np.load(dir_label+'bs_layer_'+str(i)+'_fixed_values.npy')
             
-            b0 = np.load(dir_label+'batch_norm_a_0.npy')
-            b1 = np.load(dir_label+'batch_norm_b_1.npy')
-            b2 = np.load(dir_label+'batch_norm_b_2.npy')
-            b3 = np.load(dir_label+'batch_norm_b_3.npy')
-    
+            if i == 0:
+                if self.use_bsl1rnn:
+                    try:
+                        if verbose:
+                            print('trying to load RNN weights')
+                            print(len(self.network[0].aw))
+                        aw.append(np.load(dir_label+'bs_layer_0_added_weight_0.npy'))
+                        am.append(np.load(dir_label+'bs_layer_0_added_mask_0.npy'))
+                        afv.append(np.load(dir_label+'bs_layer_0_added_fixed_value_0.npy'))
+                        self.network[0].add_inputs(self.bs_units,use_trainable=self.use_trainable,am_in=am,afv_in=afv)
+                        added += 1
+                        if verbose:
+                            print('loaded RNN weights')
+                            print(len(self.network[0].aw))
+                    except:
+                        make_rnn = True
+                        if verbose:
+                            print('no BSL1 RNN weights to load')
+                if self.use_bg:
+                    am.clear()
+                    afv.clear()
+                    if verbose:
+                        print('added bias to BS L1 neurons')
+                    #print(added)
+                    try:
+                        if verbose:
+                            print('trying to load BG->BS weights')
+                        aw.append(np.load(dir_label+'bs_layer_0_added_weight_'+str(added)+'.npy'))
+                        am.append(np.load(dir_label+'bs_layer_0_added_mask_'+str(added)+'.npy'))
+                        afv.append(np.load(dir_label+'bs_layer_0_added_fixed_value_'+str(added)+'.npy'))
+                        self.network[0].add_inputs(self.gpi_units,use_trainable=self.use_trainable)
+                        if verbose:
+                            print('loaded BG->BS weights')
+                    except:
+                        make_bg = True
+                        #add a bias of +20 to counteract the negative input from the GPi
+                        b += 20.0 * np.ones_like(b.shape)
+                        if verbose:
+                            print('no BG->BS weights to load')
+                        #print(make_bg)
+                        #print('here')
+                self.network[i].load_wts(w,b,m,fv,aw_in=aw)
+            else:
+                self.network[i].load_wts(w,b,m,fv)
+        if self.use_batch_norm:
+            a0 = np.load(dir_label+'bs_layer_'+'batch_norm_a_0.npy')
+            a1 = np.load(dir_label+'bs_layer_'+'batch_norm_a_1.npy')
+            a2 = np.load(dir_label+'bs_layer_'+'batch_norm_a_2.npy')
+            a3 = np.load(dir_label+'bs_layer_'+'batch_norm_a_3.npy')
+            #print(len(self.bna.get_weights()))
+            self.set_bna = [tf.convert_to_tensor(a0,dtype=tf.float32),tf.convert_to_tensor(a1,dtype=tf.float32),tf.convert_to_tensor(a2,dtype=tf.float32),tf.convert_to_tensor(a3,dtype=tf.float32)]
+
+            
+            b0 = np.load(dir_label+'bs_layer_'+'batch_norm_b_0.npy')
+            b1 = np.load(dir_label+'bs_layer_'+'batch_norm_b_1.npy')
+            b2 = np.load(dir_label+'bs_layer_'+'batch_norm_b_2.npy')
+            b3 = np.load(dir_label+'bs_layer_'+'batch_norm_b_3.npy')
+            self.set_bnb = [tf.convert_to_tensor(b0,dtype=tf.float32),tf.convert_to_tensor(b1,dtype=tf.float32),tf.convert_to_tensor(b2,dtype=tf.float32),tf.convert_to_tensor(b3,dtype=tf.float32)]
+        if (not make_bg) and self.use_bg:
+            for i in range(len(self.bg)):
+                w = np.load(dir_label+'bg_layer_'+str(i)+'_weights.npy')
+                b = np.load(dir_label+'bg_layer_'+str(i)+'_biases.npy')
+                m = np.load(dir_label+'bg_layer_'+str(i)+'_mask.npy')
+                fv = np.load(dir_label+'bg_layer_'+str(i)+'_fixed_values.npy')
+                self.bg[i].load_wts(w,b,m,fv)
+            for i in range(len(self.bgbn)):
+                self.set_bgbn.append([tf.convert_to_tensor(np.load(dir_label+'bg_layer_batch_norm_'+str(i)+'_'+str(x)+'.npy'),dtype=tf.float32) for x in range(4)])
+                
         #w = np.array([self.network[i].get_wts() for i in range(len(self.network))])
         #w.save(os.getcwd()+'\\logs\\'+'array')
+        return make_rnn, make_bg
 
 class Critic(keras.Model):
     def __init__(self,params):
@@ -412,8 +642,8 @@ class Critic(keras.Model):
         #hyperparams
         self.units = params['CRITIC_UNITS']
         self.number_to_fix = params['CRITIC_NFIX']
-        self.input_sz = 9
-        self.action_sz = 6
+        self.input_sz = params['INPUT_SZ']
+        self.action_sz = params['ACTION_SZ']
         self.use_batch_norm = params['USE_BATCH_NORM']
         self.use_cust = params['USE_CUST']
 
@@ -429,7 +659,10 @@ class Critic(keras.Model):
             self.l3 = layers.Dense(1,activation='relu')
 
         self.bna = tf.keras.layers.BatchNormalization()
-        self.bnb = tf.keras.layers.BatchNormalization()		
+        self.bnb = tf.keras.layers.BatchNormalization()	
+
+        self.n_step = 0
+        self.load = False
 
     def call(self,state,action,bnorm):
         inputs = layers.concatenate([state,action])
@@ -457,6 +690,11 @@ class Critic(keras.Model):
             val = tf.nn.relu(val)
         else:
             val = self.l3(out)
+        
+        self.n_step += 1
+        if(self.n_step == 1 and self.load):
+            self.bna.set_weights(self.set_bna)
+            self.bnb.set_weights(self.set_bnb)
         
         return val
         
@@ -498,7 +736,7 @@ class Critic(keras.Model):
         else:
             save_label = os.getcwd()+'\\logs\\'+ label +'\\critic_layer_'
         for i in range(len(self.critic_layers)):
-            w,b,m,fv = self.critic_layers[i].get_wts()
+            w,b,m,fv,aw,am,afv = self.critic_layers[i].get_wts()
             np.save(save_label+str(i)+'_weights',w,allow_pickle=False)
             np.save(save_label+str(i)+'_biases',b,allow_pickle=False)
             np.save(save_label+str(i)+'_mask',m,allow_pickle=False)
@@ -514,6 +752,7 @@ class Critic(keras.Model):
             np.save(save_label+'batch_norm_b_3',self.bnb.get_weights()[3],allow_pickle=False)
             
     def load_wts(self,dir_label):
+        self.load = True
         for i in range(len(self.critic_layers)):
             w = np.load(dir_label+str(i)+'_weights.npy')
             b = np.load(dir_label+str(i)+'_biases.npy')
@@ -525,11 +764,14 @@ class Critic(keras.Model):
             a1 = np.load(dir_label+'batch_norm_a_1.npy')
             a2 = np.load(dir_label+'batch_norm_a_2.npy')
             a3 = np.load(dir_label+'batch_norm_a_3.npy')
-            
-            b0 = np.load(dir_label+'batch_norm_a_0.npy')
+            self.set_bna = [tf.convert_to_tensor(a0,dtype=tf.float32),tf.convert_to_tensor(a1,dtype=tf.float32),tf.convert_to_tensor(a2,dtype=tf.float32),tf.convert_to_tensor(a3,dtype=tf.float32)]
+
+            b0 = np.load(dir_label+'batch_norm_b_0.npy')
             b1 = np.load(dir_label+'batch_norm_b_1.npy')
             b2 = np.load(dir_label+'batch_norm_b_2.npy')
             b3 = np.load(dir_label+'batch_norm_b_3.npy')
+            self.set_bnb = [tf.convert_to_tensor(b0,dtype=tf.float32),tf.convert_to_tensor(b1,dtype=tf.float32),tf.convert_to_tensor(b2,dtype=tf.float32),tf.convert_to_tensor(b3,dtype=tf.float32)]
+
 	
 class Object():
     def __init__(self,utility=[],location=[],name=''):
@@ -540,6 +782,7 @@ class Object():
 class Context():
     def __init__(self,color=[],objects=[],rfp=[],hparams=[]):
         self.color = color
+        self.color2 = []
         self.hparams = hparams
         self.objects = objects
         #reward function parameters
@@ -589,23 +832,48 @@ class Context():
         self.met_goal_scale = max(self.met_goal_scale - self.met_goal_decay,self.min_goal_scale)
         
 class Memory:
-	def __init__(self):
-		self.prestates = []
-		self.poststates = []
-		self.actions = []
-		self.rewards = []
-	
-	def store(self,prestate,poststate,action,reward):
-		self.prestates.append(prestate)
-		self.poststates.append(poststate)
-		self.actions.append(action)
-		self.rewards.append(reward)
-	
-	def clear(self):
-		self.prestates = []
-		self.poststates = []
-		self.actions = []
-		self.rewards = []
+    def __init__(self):
+        self.prestates = []
+        self.poststates = []
+        self.prestates2 = []
+        self.poststates2 = []
+        self.actions = []
+        self.rewards = []
+        self.l1_last_outs = []
+        self.max_reward = 0
+        
+    def store(self,prestate,poststate,action,reward):
+        self.prestates.append(prestate)
+        self.poststates.append(poststate)
+        self.actions.append(action)
+        self.rewards.append(reward)
+        if reward > self.max_reward:
+            self.max_reward = reward
+
+    def store2(self,prestate,prestate2,poststate,poststate2,action,reward):
+        self.prestates.append(prestate)
+        self.poststates.append(poststate)
+        self.prestates2.append(prestate2)
+        self.poststates2.append(poststate2)
+        self.actions.append(action)
+        self.rewards.append(reward)
+        if reward > self.max_reward:
+            self.max_reward = reward
+    
+    def store_l1(self,l1_out):
+        self.l1_last_outs.append(l1_out)
+        #print(l1_out)
+            
+
+    def clear(self):
+        self.prestates = []
+        self.poststates = []
+        self.prestates2 = []
+        self.poststates2 = []
+        self.actions = []
+        self.rewards = []
+        self.l1_last_outs = []
+        
         
 class Agent():
     def __init__(self,summary_writer,log_save_label,hparams=[]):
@@ -629,10 +897,17 @@ class Agent():
         self.max_tde = self.hparams[MAX_TDE]
         self.actor_decay_rate = self.hparams[ACTOR_DECAY_RATE]
         self.critic_decay_rate = self.hparams[CRITIC_DECAY_RATE]
+        self.use_bg = self.hparams[USE_BG]
+        self.use_bsl1rnn = self.hparams[USE_BSL1RNN]
+        self.expand_n = self.hparams[EXPAND_N] #expanding the 'memory' for critic training
         #end hyperparams
+        
+        self.loading_state = self.hparams[LOADING_STATE]
         
         actor_params = {}
         actor_params['BS_UNITS'] = self.hparams[BS_UNITS]
+        actor_params['STR_UNITS'] = self.hparams[STR_UNITS]
+        actor_params['GPI_UNITS'] = self.hparams[GPI_UNITS]
         actor_params['USE_BATCH_NORM'] = self.hparams[USE_BATCH_NORM]
         actor_params['ACTOR_NFIX'] = self.hparams[ACTOR_NFIX]
         actor_params['STD_D'] = self.hparams[STD_D]
@@ -642,18 +917,36 @@ class Agent():
         actor_params['NOISE_BASE'] = self.hparams[NOISE_BASE]
         actor_params['MAX_FR'] = self.hparams[MAX_FR]
         actor_params['USE_CUST'] = self.hparams[USE_CUST]
+        actor_params['USE_BG'] = self.hparams[USE_BG]
+        actor_params['USE_BSL1RNN'] = self.hparams[USE_BSL1RNN]
+        actor_params['GPI_BIAS'] = self.hparams[GPI_BIAS]
+        actor_params['STR_NFIX'] = self.hparams[STR_NFIX]
+        actor_params['GPI_TRAINABLE'] = self.hparams[GPI_TRAINABLE]
+        if self.loading_state:
+            actor_params['USE_TRAINABLE'] = False
+        else:
+            actor_params['USE_TRAINABLE'] = True
         
         critic_params = {}
         critic_params['CRITIC_UNITS'] = self.hparams[CRITIC_UNITS]
         critic_params['CRITIC_NFIX'] = self.hparams[CRITIC_NFIX]
         critic_params['USE_CUST'] = self.hparams[USE_CUST]
         critic_params['USE_BATCH_NORM'] = self.hparams[USE_BATCH_NORM]
+        if self.use_bg:
+            critic_params['INPUT_SZ'] = 12
+            critic_params['ACTION_SZ'] = 6        
+        else:
+            critic_params['INPUT_SZ'] = 9
+            critic_params['ACTION_SZ'] = 6
         
         
         self.actor = Actor(actor_params)
         self.actor_opt = tf.keras.optimizers.Adam(learning_rate=self.lr_actor)
         self.critic = Critic(critic_params)
         self.critic_opt = tf.keras.optimizers.Adam(learning_rate=self.lr_critic)
+        
+        self.bg_out = []
+        
         self.log_save_label = log_save_label
         #needed for using noise
         tf.keras.backend.set_learning_phase(1)
@@ -661,8 +954,11 @@ class Agent():
         self.memory = Memory()
         
         self.pre_state = []
+        self.pre_state2 = []
         self.post_state = []
+        self.post_state2 = []
         self.action = []
+        self.last_bs_l1_out = []
         
         self.actor_loss = 0
         self.critic_loss = 0
@@ -673,6 +969,8 @@ class Agent():
         self.last_reward = [0.0]
         self.location = [0.0,0.0]
         self.euclidian_pos = [0.0,0.0]
+        
+        self.is_neutral = True
         
         self.cost = 0
         #make hyperparam
@@ -694,18 +992,61 @@ class Agent():
         self.n_step += 1
         color = np.array([context.color])/self.cdiv
         pos = self.expand_vector(self.c_pos)
-        self.pre_state = layers.concatenate([color,pos])
-        #feed forward pass through the actor (in this case 'brainstem') with contextual input
-        self.action = self.actor(self.pre_state,use_noise=True,bnorm=False)
-        self.cost = self.cost_scale * tf.norm(self.action).numpy()
-        #max norm is 350 for max_fr 200 for 3 limbs
-        if(self.n_step == 1):
-            self.actor.save_init_weights()
-            self.critic.save_init_weights()
-        self.move_arm(self.action) #updates c_pos
-        new_pos = self.expand_vector(self.c_pos)
-        self.post_state = layers.concatenate([color,new_pos])
-        self.log_act()
+        if self.use_bg:
+            color2 = np.array([context.color2])/self.cdiv
+            self.pre_state = layers.concatenate([color,pos])
+            #a new context vector with a second color (more contextual complexity)
+            self.pre_state2 = layers.concatenate([color,color2,pos])
+            
+            #get BS L1 out info, it is written out; don't have to use it though
+            if self.is_neutral:
+                self.last_bs_l1_out = tf.zeros([1,1000])
+            else:
+                self.last_bs_l1_out = self.actor.l1_last_out 
+            
+            #Here you decide if you use the BS L1 info or not
+            if self.use_bsl1rnn:
+                #print('here')
+                self.memory.store_l1(self.last_bs_l1_out)
+                self.action = self.actor(self.pre_state,bg_input=self.pre_state2,use_noise=True,bnorm=False,new_in=[self.last_bs_l1_out])
+            else:
+                self.action = self.actor(self.pre_state,bg_input=self.pre_state2,use_noise=True,bnorm=False)
+            self.cost = self.cost_scale * tf.norm(self.action).numpy()
+            if(self.n_step == 1):
+                self.actor.save_init_weights()
+                self.critic.save_init_weights()
+            self.move_arm(self.action) #updates c_pos
+            new_pos = self.expand_vector(self.c_pos)
+            self.post_state = layers.concatenate([color,new_pos])
+            self.post_state2 = layers.concatenate([color,color2,new_pos])
+            self.log_act()
+        else:
+            #print('here in else')
+            if self.is_neutral:
+                self.last_bs_l1_out = tf.zeros([1,1000])
+            else:
+                self.last_bs_l1_out = self.actor.l1_last_out 
+            
+            self.memory.store_l1(self.last_bs_l1_out)
+            
+            self.pre_state = layers.concatenate([color,pos])
+            #feed forward pass through the actor (in this case 'brainstem') with contextual input
+            if self.use_bsl1rnn:
+                self.action = self.actor(self.pre_state,use_noise=True,bnorm=False,new_in=[self.last_bs_l1_out])
+            else:
+                self.action = self.actor(self.pre_state,use_noise=True,bnorm=False)
+            
+            
+            self.cost = self.cost_scale * tf.norm(self.action).numpy()
+            #max norm is 350 for max_fr 200 for 3 limbs
+            if(self.n_step == 1):
+                self.actor.save_init_weights()
+                self.critic.save_init_weights()
+            self.move_arm(self.action) #updates c_pos
+            new_pos = self.expand_vector(self.c_pos)
+            self.post_state = layers.concatenate([color,new_pos])
+            self.log_act()
+        self.is_neutral = False
         
     def move_arm(self,action):
         action = action[0]
@@ -719,10 +1060,14 @@ class Agent():
     def update_memory(self,reward):
         reward = reward - self.cost
         self.last_reward = reward
-        self.memory.store(self.pre_state,self.post_state,self.action,reward)
+        if self.loading_state:
+            self.memory.store2(self.pre_state,self.pre_state2,self.post_state,self.post_state2,self.action,reward)
+        else:
+            self.memory.store(self.pre_state,self.post_state,self.action,reward)
     
     def neutral(self):
         self.c_pos = np.zeros((self.n_limbs,self.n_joints))
+        self.is_neutral = True
         
     #A vector is doubled in size where element pairs (1,2) (3,4) etc are positive/negative    
     def expand_vector(self,v):
@@ -738,57 +1083,178 @@ class Agent():
     
     def load_existing_ac(self,dir_label):
         if linux:
-            dir_label_a = dir_label+'/actor_layer_'
+            dir_label_a = dir_label+'/'
             dir_label_c = dir_label+'/critic_layer_'
         else:
-            dir_label_a = dir_label+'\\actor_layer_'
+            dir_label_a = dir_label+'\\'
             dir_label_c = dir_label+'\\critic_layer_'       
-        self.actor.load_wts(dir_label_a)
-        self.critic.load_wts(dir_label_c)
-        #print('here')
+        make_rnn,make_bg = self.actor.load_wts(dir_label_a)
+        #Load critic here, fix
+        return make_rnn,make_bg
+
+    def create_new_weights(self,make_rnn=True,make_bg=True):
+        #Add inputs
+        #fix, make robust w/ hyperparams
+        #Order may matter
+        if self.use_bsl1rnn and make_rnn:
+            if verbose:
+                print('adding RNN weights to BS L1')
+                print(len(self.actor.network[0].aw))
+            self.actor.network[0].add_inputs(self.hparams[BS_UNITS]) #Recurrent inputs
+            if verbose:
+                print('added RNN weights to BS L1')
+                print(len(self.actor.network[0].aw))        
+        
+        #BG inputs to BS. Fix the weights and make them non_trainable. BS biases are also fixed
+        if self.use_bg and make_bg:
+            if verbose:
+                print('adding BG weights to BS L1')
+                print(len(self.actor.network[0].aw))
+            self.actor.network[0].add_inputs(self.hparams[GPI_UNITS],aw_init=[0.001,0.001],nonneg=True,use_trainable=False)        
+            if verbose:
+                print('added BG weights to BS L1')
+                print(len(self.actor.network[0].aw))                
+            
+    def expand_q_function(self,pre_mem,mem_actions,target_Q,color_size):
+        expand_n = self.expand_n
+        if expand_n == 0:
+            return pre_mem,mem_actions,target_Q
+        csz = color_size #3 normally, 6 if more info, etc.
+        x = np.concatenate([pre_mem.numpy(),mem_actions.numpy()],1)
+        x_r = x.shape[0] #100; elements stored in memory
+        x_c = x.shape[1] #15; 3 color, 6 position, 6 action
+        #x = np.concatenate([pre_mem[:,x_c_start:x_c],mem_actions],1) #this was to slice out color info
+        #print(x.shape)
+        #print(x)
+        x_dm = distance_matrix(x,x,p=2) #pair wise distance between all vectors in x. Shape will be x_r, x_r
+        quant_percent = 0.1 #This is important to play around w/
+        thresh = np.quantile(x_dm,quant_percent)
+        #print(thresh)
+        idx1,idx2 = np.asarray(x_dm<=thresh).nonzero()
+        #print(len(idx1))
+        
+            
+        for i in range(len(idx1)):
+            a,b = idx1[i],idx2[i]
+            if a < b and np.linalg.norm(x[a]-x[b])>0 and all(x[a][0:csz]==x[b][0:csz]):
+                #must be same color, must not be the same point, a<b prevents repeats
+                #x[a][0]==x[b][0] is a weak check though; it should be 1:3 or more for BG
+                
+                #print(pre_mem[a])
+                expand_pre_mem = np.linspace(pre_mem[a],pre_mem[b],expand_n,endpoint=False)
+                #print(expand_pre_mem)
+                expand_pre_mem = expand_pre_mem[1:expand_n,:]
+                epm = tf.convert_to_tensor(expand_pre_mem,dtype=tf.float32)
+                pre_mem = tf.concat([pre_mem,epm],0)
+                
+                #print(expand_pre_mem)
+                #print(pre_mem[b])
+                expand_mem_actions = np.linspace(mem_actions[a],mem_actions[b],expand_n,endpoint=False)
+                expand_mem_actions = expand_mem_actions[1:expand_n,:]
+                ema = tf.convert_to_tensor(expand_mem_actions,dtype=tf.float32)
+                mem_actions = tf.concat([mem_actions,ema],0)
+                
+                expand_target_q = np.linspace(target_Q[a],target_Q[b],expand_n,endpoint=False)
+                expand_target_q = expand_target_q[1:expand_n,:]
+                etq = tf.convert_to_tensor(expand_target_q,dtype=tf.float32)
+                target_Q = tf.concat([target_Q,etq],0)
+
+                #pops off the top because that's just a repeat of the first input in the range
+        #print(target_Q.shape)
+        return pre_mem,mem_actions,target_Q
+        
+    
+    
     
     def train(self):
         huber = tf.keras.losses.Huber(delta=self.max_grad)
         pre_mem = tf.convert_to_tensor(np.vstack(self.memory.prestates),dtype=tf.float32)
         post_mem = tf.convert_to_tensor(np.vstack(self.memory.poststates),dtype=tf.float32)
+        if self.use_bg:
+            pre_mem2 = tf.convert_to_tensor(np.vstack(self.memory.prestates2),dtype=tf.float32)
+            post_mem2 = tf.convert_to_tensor(np.vstack(self.memory.poststates2),dtype=tf.float32)
+        if self.use_bsl1rnn:
+            l1_outs = tf.convert_to_tensor(np.vstack(self.memory.l1_last_outs),dtype=tf.float32)
         mem_actions = tf.convert_to_tensor(np.vstack(self.memory.actions),dtype=tf.float32)
         mem_rewards = tf.convert_to_tensor(np.vstack(self.memory.rewards),dtype=tf.float32)
         self.last_reward_avg = tf.reduce_mean(mem_rewards)
-        #print(self.n_train)
-        #print(pre_mem)
-        #print(post_mem)
-        #print(mem_actions)
-        #print(mem_rewards)
-        #print('train')
-        #consider making bnorm true, true
-        target_Q = self.critic(post_mem,self.actor(post_mem,use_noise=False,bnorm=self.bnorm_train),bnorm=False)
-        target_Q = mem_rewards + tf.math.multiply(target_Q,self.gamma)
+        msr_of_max_r = 0.1 + 0.9*(self.last_reward_avg/self.memory.max_reward)
+        #allows the decline in noise to scale up as you get closer to max_reward
         
-        with tf.GradientTape() as tape:
-            current_Q = self.critic(pre_mem,mem_actions,bnorm=self.bnorm_train) #bnorm only true here because these were real pairs that occurred
-            td_errors = huber(target_Q,current_Q)
-            self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
-        self.critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
-        #print(self.critic_grad)
-        self.critic_opt.apply_gradients(zip(self.critic_grad,self.critic.trainable_variables))
+        if self.use_bg:
+            if self.use_bsl1rnn:
+                target_Q = self.critic(post_mem2,self.actor(post_mem,bg_input=post_mem2,use_noise=False,bnorm=self.bnorm_train,new_in=[l1_outs]),bnorm=False)
+            else:
+                target_Q = self.critic(post_mem2,self.actor(post_mem,bg_input=post_mem2,use_noise=False,bnorm=self.bnorm_train),bnorm=False)                          
+            target_Q = mem_rewards + tf.math.multiply(target_Q,self.gamma)
+            
+            with tf.GradientTape() as tape:
+                current_Q = self.critic(pre_mem2,mem_actions,bnorm=self.bnorm_train) #bnorm only true here because these were real pairs that occurred
+                td_errors = huber(target_Q,current_Q)
+                self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
+            self.critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
+            self.critic_opt.apply_gradients(zip(self.critic_grad,self.critic.trainable_variables))
+            
+            #adjust actor noise
+            self.tde = target_Q*self.tde_scale - current_Q
+            self.tde = tf.reduce_mean(self.tde)
+            self.tde = self.tde * msr_of_max_r #new 10/19/20
+            self.tde = min(self.tde,self.max_tde)
+            self.actor.update_noise(self.tde)
+        else:
+            if self.use_bsl1rnn:
+                target_Q = self.critic(post_mem,self.actor(post_mem,use_noise=False,bnorm=self.bnorm_train,new_in=[l1_outs]),bnorm=False)
+            else:
+                target_Q = self.critic(post_mem,self.actor(post_mem,use_noise=False,bnorm=self.bnorm_train),bnorm=False)            
+            target_Q = mem_rewards + tf.math.multiply(target_Q,self.gamma)
+            
+            #trial
+            e_pre_mem,e_mem_actions,e_target_Q = self.expand_q_function(pre_mem,mem_actions,target_Q,3)
+            
+            with tf.GradientTape() as tape:
+                current_Q = self.critic(e_pre_mem,e_mem_actions,bnorm=self.bnorm_train) #bnorm only true here because these were real pairs that occurred
+                td_errors = huber(e_target_Q,current_Q)
+                self.critic_loss = tf.clip_by_value(tf.reduce_mean(td_errors),0,self.max_critic_loss)	
+            self.critic_grad = tape.gradient(self.critic_loss,self.critic.trainable_variables)
+            self.critic_opt.apply_gradients(zip(self.critic_grad,self.critic.trainable_variables))
+            
+            #adjust actor noise
+            self.tde = e_target_Q*self.tde_scale - current_Q
+            self.tde = tf.reduce_mean(self.tde)
+            self.tde = min(self.tde,self.max_tde)        
+            self.actor.update_noise(self.tde)
         
-        #adjust actor noise
-        self.tde = target_Q*self.tde_scale - current_Q
-        self.tde = tf.reduce_mean(self.tde)
-        self.tde = min(self.tde,self.max_tde)
-        self.actor.update_noise(self.tde)
-        
-        with tf.GradientTape() as tape:
-            self.next_actions = self.actor(pre_mem,use_noise=False,bnorm=self.bnorm_train)
-            #print(next_actions)
-            self.actor_loss = -tf.reduce_mean(self.critic(pre_mem,self.next_actions,bnorm=False))
-        
-        self.actor_grad = tape.gradient(self.actor_loss,self.actor.trainable_variables)
-        self.actor_opt.apply_gradients(zip(self.actor_grad,self.actor.trainable_variables))
-        if self.use_decay:
-            self.actor.decay(self.actor_decay_rate)
-            self.critic.decay(self.critic_decay_rate)
-        ###go back and fix use_cust
+        if self.use_bg:
+            if self.use_bsl1rnn:
+                with tf.GradientTape() as tape:
+                    self.next_actions = self.actor(pre_mem,bg_input=pre_mem2,use_noise=False,bnorm=self.bnorm_train,new_in=[l1_outs])
+                    self.actor_loss = -tf.reduce_mean(self.critic(pre_mem2,self.next_actions,bnorm=False))
+            else:
+                with tf.GradientTape() as tape:
+                    self.next_actions = self.actor(pre_mem,bg_input=pre_mem2,use_noise=False,bnorm=self.bnorm_train)
+                    self.actor_loss = -tf.reduce_mean(self.critic(pre_mem2,self.next_actions,bnorm=False))
+
+            self.actor_grad = tape.gradient(self.actor_loss,self.actor.trainable_variables)
+            self.actor_opt.apply_gradients(zip(self.actor_grad,self.actor.trainable_variables))
+            
+        else:
+            if self.use_bsl1rnn:
+                with tf.GradientTape() as tape:
+                    self.next_actions = self.actor(pre_mem,use_noise=False,bnorm=self.bnorm_train,new_in=[l1_outs])
+                    #print(next_actions)
+                    self.actor_loss = -tf.reduce_mean(self.critic(pre_mem,self.next_actions,bnorm=False))
+            else:
+                with tf.GradientTape() as tape:
+                    self.next_actions = self.actor(pre_mem,use_noise=False,bnorm=self.bnorm_train)
+                    #print(next_actions)
+                    self.actor_loss = -tf.reduce_mean(self.critic(pre_mem,self.next_actions,bnorm=False))            
+            
+            self.actor_grad = tape.gradient(self.actor_loss,self.actor.trainable_variables)
+            self.actor_opt.apply_gradients(zip(self.actor_grad,self.actor.trainable_variables))
+            if self.use_decay:
+                self.actor.decay(self.actor_decay_rate)
+                self.critic.decay(self.critic_decay_rate)
+            ###go back and fix use_cust
         self.actor.save_wts(self.log_save_label)
         self.critic.save_wts(self.log_save_label)
         
@@ -808,7 +1274,10 @@ class Agent():
             tf.summary.scalar('obj y',self.location[1],step=self.n_step)
             tf.summary.scalar('cost',self.cost,step=self.n_step)
             tf.summary.histogram('action',self.action,step=self.n_step)
-
+            tf.summary.histogram('bs_l1_out',self.last_bs_l1_out,step=self.n_step)
+            if self.use_bg:
+                tf.summary.histogram('str_out',self.actor.last_str_out,step=self.n_step)    
+                tf.summary.histogram('gpi_out',self.actor.last_gpi_out,step=self.n_step)
     
     def log_train(self):
         with self.summary_writer.as_default():
@@ -817,26 +1286,28 @@ class Agent():
             tf.summary.scalar('critic loss',self.critic_loss,step=self.n_train)
             tf.summary.scalar('raw TD error',self.tde,step=self.n_train)
             tf.summary.scalar('noise',self.actor.std_d,step=self.n_train)
-            tf.summary.histogram('critic grad',self.critic_grad[0],step=self.n_train)
-            tf.summary.histogram('actor grad',self.actor_grad[0],step=self.n_train)
+            #tf.summary.histogram('critic grad',self.critic_grad[0],step=self.n_train)
+            #tf.summary.histogram('actor grad',self.actor_grad[0],step=self.n_train)
             tf.summary.histogram('next actions',self.next_actions[0],step=self.n_train)
 
+
             #fix, use_cust
-            tf.summary.histogram('actor weights 1',self.actor.network[0].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('actor weights 2',self.actor.network[1].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('actor weights 3',self.actor.network[2].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('critic weights 1',self.critic.critic_layers[0].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('critic weights 2',self.critic.critic_layers[1].trainable_weights[0],step=self.n_train)
-            tf.summary.histogram('critic weights 3',self.critic.critic_layers[2].trainable_weights[0],step=self.n_train)
-            if self.hparams[USE_BATCH_NORM]:
-                tf.summary.histogram('bnorma0',self.actor.bna.get_weights()[0],step=self.n_train)
-                tf.summary.histogram('bnorma1',self.actor.bna.get_weights()[1],step=self.n_train)
-                tf.summary.histogram('bnorma2',self.actor.bna.get_weights()[2],step=self.n_train)
-                tf.summary.histogram('bnorma3',self.actor.bna.get_weights()[3],step=self.n_train)
-                tf.summary.histogram('bnormb0',self.actor.bnb.get_weights()[0],step=self.n_train)
-                tf.summary.histogram('bnormb1',self.actor.bnb.get_weights()[1],step=self.n_train)
-                tf.summary.histogram('bnormb2',self.actor.bnb.get_weights()[2],step=self.n_train)
-                tf.summary.histogram('bnormb3',self.actor.bnb.get_weights()[3],step=self.n_train)
+            tf.summary.histogram('actor bsl1 weights',self.actor.network[0].weights[0],step=self.n_train)
+            tf.summary.histogram('actor bsl1 biases',self.actor.network[0].weights[1],step=self.n_train)
+            # tf.summary.histogram('actor weights 2',self.actor.network[1].trainable_weights[0],step=self.n_train)
+            # tf.summary.histogram('actor weights 3',self.actor.network[2].trainable_weights[0],step=self.n_train)
+            # tf.summary.histogram('critic weights 1',self.critic.critic_layers[0].trainable_weights[0],step=self.n_train)
+            # tf.summary.histogram('critic weights 2',self.critic.critic_layers[1].trainable_weights[0],step=self.n_train)
+            # tf.summary.histogram('critic weights 3',self.critic.critic_layers[2].trainable_weights[0],step=self.n_train)
+            # if self.hparams[USE_BATCH_NORM]:
+                # tf.summary.histogram('bnorma0',self.actor.bna.get_weights()[0],step=self.n_train)
+                # tf.summary.histogram('bnorma1',self.actor.bna.get_weights()[1],step=self.n_train)
+                # tf.summary.histogram('bnorma2',self.actor.bna.get_weights()[2],step=self.n_train)
+                # tf.summary.histogram('bnorma3',self.actor.bna.get_weights()[3],step=self.n_train)
+                # tf.summary.histogram('bnormb0',self.actor.bnb.get_weights()[0],step=self.n_train)
+                # tf.summary.histogram('bnormb1',self.actor.bnb.get_weights()[1],step=self.n_train)
+                # tf.summary.histogram('bnormb2',self.actor.bnb.get_weights()[2],step=self.n_train)
+                # tf.summary.histogram('bnormb3',self.actor.bnb.get_weights()[3],step=self.n_train)
 
 
 
@@ -862,6 +1333,7 @@ class Environment(threading.Thread):
         self.max_steps = self.hparams[MAX_STEPS]
         self.max_sessions = self.hparams[MAX_SESSIONS]
         self.bs_completed_lr = self.hparams[BS_COMPLETED_LR]
+        self.use_bg = self.hparams[USE_BG]
         #end hyperparams
         self.log_dir = ''
         self.current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S%f")
@@ -882,7 +1354,7 @@ class Environment(threading.Thread):
         #current context index
         self.cc_idx = 0
         self.first_round = True #if haven't completed all contexts yet
-        self.loading_state = False
+        self.loading_state = self.hparams[LOADING_STATE]
         self.load_dir_label = ''
         ###go back and fix use_cust
         self.fix_weights = False
@@ -894,8 +1366,13 @@ class Environment(threading.Thread):
         self.rounds = 0
 
     def run(self):
-        #self.gen_env()
-        self.load_env(os.getcwd()+'\\logs\\20200823-202109009195')
+
+        if self.loading_state:
+            self.load_env(os.getcwd()+'\\load\\solved-rnn-1')
+            #self.load_env(os.getcwd()+'\\load\\20200909-212541996035')
+        else:
+            self.gen_env()
+
         self.start_round()
         with self.summary_writer.as_default():
             hp.hparams(self.hparams)
@@ -907,6 +1384,26 @@ class Environment(threading.Thread):
         self.n_step_total = 0
         self.n_session = 0 #session += 1 whenever the limbs reset to neutral pos
         context = self.contexts[self.cc_idx] #current context
+        make_rnn = True
+        make_bg = True
+        
+        if self.loading_state:
+            self.agent.actor.std_d = self.hparams[LOAD_NOISE]
+            make_rnn,make_bg = self.agent.load_existing_ac(self.load_dir_label)
+            #self.fix_weights = False
+        
+        if self.use_bg and make_bg:
+            if verbose:
+                print('altering contexts')
+            self.add_new_col()
+        
+
+
+        
+        #Needs to come after the above loading step
+        #print(make_bg)
+        self.agent.create_new_weights(make_rnn,make_bg)
+        
         if verbose:
             print(context.color)
         done = False
@@ -928,6 +1425,8 @@ class Environment(threading.Thread):
 
 
             while running:
+                if use_sleep:
+                    time.sleep(1.0)
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
@@ -935,7 +1434,10 @@ class Environment(threading.Thread):
                     pos, context, done = self.main(context)
                     screen.fill(context.color)
                     pygame.draw.lines(screen,black,False,pos[0],5)#pos sliced at 0 since only one limb
-                    pygame.draw.circle(screen,gray,context.objects[0].location,5)
+                    if self.use_bg:
+                        pygame.draw.circle(screen,context.color2,context.objects[0].location,5)
+                    else:
+                        pygame.draw.circle(screen,gray,context.objects[0].location,5)
                     pygame.display.update()
                     
         else:
@@ -945,10 +1447,6 @@ class Environment(threading.Thread):
     def main(self,context):
         done = False
         round_complete = False
-        if self.loading_state:
-            self.agent.actor.std_d = self.hparams[LOAD_NOISE]
-            self.agent.load_existing_ac(self.load_dir_label)
-            self.fix_weights = False
             
         self.agent.act(context)
         pos = self.get_euclidian_points(self.agent.c_pos,self.agent.n_limbs) #slice at 0
@@ -972,7 +1470,11 @@ class Environment(threading.Thread):
             done = True
             
         if self.n_step_total % self.update_freq == 0:
+            #print('training')
+            start = time.time()
             self.agent.train()
+            end = time.time()
+            #print('time to train...'+str(end-start))
         
         if context.check_met_goal() == True:
             if verbose:
@@ -980,39 +1482,14 @@ class Environment(threading.Thread):
             if not self.cc_idx in self.solved_context:
                 self.solved_context.append(self.cc_idx)
                 if self.fix_weights:
+                    if verbose:
+                        print('fixing weights for context: '+str(self.cc_idx))
                     self.agent.actor.fix_weights()
                     self.agent.critic.fix_weights()                                    
             if len(self.contexts) == len(self.solved_context):
                 done = True
+            #reduce the reward of a solved context to avoid repeatedly solving one context
             context.decay_reward()
-        
-            #self.cc_idx += 1
-            #self.agent.neutral()
-            #self.agent.memory.clear()
-            #self.agent.bnorm_train = False
-            #self.agent.actor.noise_scale = 0.001
-            #self.agent.actor.noise_scale_2 = 0.0009
-            
-            #if self.first_round and self.fix_weights:
-                #self.agent.actor.fix_weights()
-                #self.agent.critic.fix_weights()
-            
-            #if(self.cc_idx >= len(self.contexts)):
-                #self.cc_idx = 0
-                #self.rounds += 1
-                #if self.first_round:
-                    #self.agent.actor_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
-                    #self.agent.critic_opt = tf.keras.optimizers.Adam(learning_rate=self.bs_completed_lr)
-                    #self.agent.use_decay = False
-                    #self.agent.bnorm_train = False
-                    #self.first_round = False
-                #if self.rounds >= 10:
-                    #self.agent.bnorm_train = False
-
-            #if self.first_round:
-                #self.agent.actor.reset_noise()
-            #update context    
-            #context = self.contexts[self.cc_idx]
         return pos, context, done
     
     def gen_env(self):
@@ -1030,7 +1507,6 @@ class Environment(threading.Thread):
                 scale = random.uniform(maxdist/self.scale_ratio_max,maxdist/self.scale_ratio_min)
                 threshold = random.uniform(maxdist/self.threshold_ratio_max,maxdist/self.threshold_ratio_min) #ratio of the maximum distance. future proofing.
             self.contexts.append(Context(color,[Object(utility,location_int)],[threshold,self.threshold_2,scale],self.hparams))
-            #print(self.contexts[n].objects[0].location)
         if linux:
             with open(self.log_dir+'/contexts.pickle','wb') as f:
                 pickle.dump(self.contexts,f)
@@ -1041,12 +1517,49 @@ class Environment(threading.Thread):
     def load_env(self,dir_label):
         self.load_dir_label = dir_label
         self.loading_state = True
+        self.agent.loading_state = True
         if linux:
             with open(dir_label+'/contexts.pickle','rb') as f:
                 self.contexts = pickle.load(f)
         else:
             with open(dir_label+'\\contexts.pickle','rb') as f:
                 self.contexts = pickle.load(f)
+    #new
+    def add_new_col(self):
+        #add a second color and change object locations
+        locations = []
+        for c in self.contexts:
+            color = [random.randint(0,255),random.randint(0,255),random.randint(0,255)] #get a color
+            c.color2 = color
+            for o in c.objects:
+                locations.append(o.location)
+        reverse = True
+        displace = True
+        disp_range = 30
+        #exchange positions. Can also displace (commented out)
+        #make this better, reverse the list
+        for c in self.contexts:
+            for o in c.objects:
+                ##r = random.randint(len(locations))
+                if reverse:
+                    r = len(locations)-1
+                    o.location = locations[r]
+                    del locations[r]
+
+                if displace:
+                    disp = [random.randint(-1*disp_range,disp_range),random.randint(-1*disp_range,disp_range)]
+                    o.location = [o.location[0]+disp[0],o.location[1]+disp[1]]
+                #print(o.location)
+        if linux:
+            with open(self.log_dir+'/contexts.pickle','wb') as f:
+                pickle.dump(self.contexts,f)
+        else:
+            with open(self.log_dir+'\\contexts.pickle','wb') as f:
+                pickle.dump(self.contexts,f)
+        if verbose:
+            print('new context created and saved')
+            print('displace: '+str(displace))
+            print('reverse: '+str(reverse))
     
     def get_euclidian_points(self,pos,n_limbs=1):
         degrconv = np.pi / 180.
@@ -1114,6 +1627,7 @@ if linux:
             CRITIC_NFIX,\
             BS_UNITS,\
             STR_UNITS,\
+            GPI_UNITS, \
             ACTOR_NFIX,\
             MAX_FR,\
             STD_D,\
@@ -1126,6 +1640,13 @@ if linux:
             USE_CUST, \
             MIN_GOAL_SCALE, \
             MET_GOAL_DECAY, \
+            LOADING_STATE, \
+            USE_BG, \
+            USE_BSL1RNN, \
+            GPI_BIAS, \
+            STR_NFIX, \
+            GPI_TRAINABLE, \
+            EXPAND_N, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
@@ -1164,6 +1685,7 @@ else:
             CRITIC_NFIX,\
             BS_UNITS,\
             STR_UNITS,\
+            GPI_UNITS, \
             ACTOR_NFIX,\
             MAX_FR,\
             STD_D,\
@@ -1176,6 +1698,13 @@ else:
             USE_CUST, \
             MIN_GOAL_SCALE, \
             MET_GOAL_DECAY, \
+            LOADING_STATE, \
+            USE_BG, \
+            USE_BSL1RNN, \
+            GPI_BIAS, \
+            STR_NFIX, \
+            GPI_TRAINABLE, \
+            EXPAND_N, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
