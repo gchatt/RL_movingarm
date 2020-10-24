@@ -173,6 +173,12 @@ manual_hparams.append(GPI_TRAINABLE)
 #expand the points in memory (by linear interpolation) to allow for more points for critic to learn from
 EXPAND_N = hp.HParam('expand_n',hp.Discrete([100]))
 manual_hparams.append(EXPAND_N)
+#How close do points need to be to be interpolated. Cannot be less than 0.1.
+QUANT_PERCENT = hp.HParam('quant_percent',hp.Discrete([0.1]))
+manual_hparams.append(QUANT_PERCENT)
+#how much the noise can decline is based on how much the last session was close to the peak reward. If you're getting closer then reward can decline faster.
+MAX_R_RATIO = hp.HParam('max_r_ratio',hp.Discrete([0.8]))
+manual_hparams.append(MAX_R_RATIO)
 
 
 METRIC_ACCURACY = 'accuracy'
@@ -363,9 +369,9 @@ class Actor(keras.Model):
 		
     def update_noise(self,tde):
         if self.std_d <= self.noise_base and tde > 0:
-            self.std_d = max(self.std_d - self.noise_scale_2*(tde - self.tau),1.0)
+            self.std_d = max(self.std_d - self.noise_scale_2*(tde + self.tau),1.0)
         else:
-            self.std_d = max(min(self.std_d - self.noise_scale*(tde - self.tau),self.std_d_init),self.noise_base)
+            self.std_d = max(min(self.std_d - self.noise_scale*(tde + self.tau),self.std_d_init),self.noise_base)
 
     def reset_noise(self):
         self.std_d = self.std_d_init
@@ -900,6 +906,8 @@ class Agent():
         self.use_bg = self.hparams[USE_BG]
         self.use_bsl1rnn = self.hparams[USE_BSL1RNN]
         self.expand_n = self.hparams[EXPAND_N] #expanding the 'memory' for critic training
+        self.max_r_ratio = self.hparams[MAX_R_RATIO]
+        self.quant_percent = self.hparams[QUANT_PERCENT]
         #end hyperparams
         
         self.loading_state = self.hparams[LOADING_STATE]
@@ -922,6 +930,7 @@ class Agent():
         actor_params['GPI_BIAS'] = self.hparams[GPI_BIAS]
         actor_params['STR_NFIX'] = self.hparams[STR_NFIX]
         actor_params['GPI_TRAINABLE'] = self.hparams[GPI_TRAINABLE]
+        
         if self.loading_state:
             actor_params['USE_TRAINABLE'] = False
         else:
@@ -1178,7 +1187,7 @@ class Agent():
         mem_actions = tf.convert_to_tensor(np.vstack(self.memory.actions),dtype=tf.float32)
         mem_rewards = tf.convert_to_tensor(np.vstack(self.memory.rewards),dtype=tf.float32)
         self.last_reward_avg = tf.reduce_mean(mem_rewards)
-        msr_of_max_r = 0.1 + 0.9*(self.last_reward_avg/self.memory.max_reward)
+        msr_of_max_r = (1-self.max_r_ratio) + self.max_r_ratio*(self.last_reward_avg/self.memory.max_reward)
         #allows the decline in noise to scale up as you get closer to max_reward
         
         if self.use_bg:
@@ -1647,6 +1656,8 @@ if linux:
             STR_NFIX, \
             GPI_TRAINABLE, \
             EXPAND_N, \
+            QUANT_PERCENT, \
+            MAX_R_RATIO, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
@@ -1705,6 +1716,8 @@ else:
             STR_NFIX, \
             GPI_TRAINABLE, \
             EXPAND_N, \
+            QUANT_PERCENT, \
+            MAX_R_RATIO, \
             BS_COMPLETED_LR],\
             metrics=[hp.Metric(METRIC_ACCURACY, display_name='Reward')]
         )
